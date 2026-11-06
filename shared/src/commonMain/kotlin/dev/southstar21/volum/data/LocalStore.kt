@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.io.IOException
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -24,6 +25,19 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
+
+/**
+ * createDirectories, tolerating another thread creating [dir] at the same moment. kotlinx-io's
+ * native implementation checks, then mkdirs, and fails with "File exists" if it loses that race
+ * (the JVM one doesn't), which dropped the store's first write on iOS.
+ */
+internal fun ensureDirectory(dir: Path) {
+    try {
+        SystemFileSystem.createDirectories(dir)
+    } catch (e: IOException) {
+        if (SystemFileSystem.metadataOrNull(dir)?.isDirectory != true) throw e
+    }
+}
 
 /** Reads and writes small JSON files atomically (temp file, then move). */
 object JsonFiles {
@@ -35,7 +49,7 @@ object JsonFiles {
     }
 
     fun <T> write(path: Path, serializer: KSerializer<T>, value: T) {
-        path.parent?.let { SystemFileSystem.createDirectories(it) }
+        path.parent?.let(::ensureDirectory)
         val tmp = Path("$path.tmp")
         SystemFileSystem.sink(tmp).buffered().use { it.writeString(VolumJson.encodeToString(serializer, value)) }
         SystemFileSystem.atomicMove(tmp, path)
@@ -76,7 +90,7 @@ class LocalStore(private val dir: Path, private val scope: CoroutineScope) {
     private fun file(name: String) = Path(dir, "$name.json")
 
     suspend fun load() = withContext(Dispatchers.IO) {
-        SystemFileSystem.createDirectories(dir)
+        ensureDirectory(dir)
         _exercises.value = JsonFiles.read(file("exercises"), exerciseSer) ?: emptyMap()
         _routines.value = JsonFiles.read(file("routines"), routineSer) ?: emptyMap()
         _workouts.value = JsonFiles.read(file("workouts"), workoutSer) ?: emptyMap()
