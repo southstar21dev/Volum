@@ -17,6 +17,8 @@ reps filled in, so logging is mostly confirming and adjusting numbers.
 
 <a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/southstar21dev/Volum"><img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" height="64" alt="Get it on Obtainium" /></a>
 <a href="https://github.com/southstar21dev/Volum/releases/latest"><img src="https://raw.githubusercontent.com/Kunzisoft/Github-badge/main/get-it-on-github.png" height="64" alt="Get it on GitHub" /></a>
+<a href="https://southstar21dev.github.io/Volum/"><img src="docs/images/get-it-on-altstore.png" height="64" alt="Get it on AltStore" /></a>
+<a href="https://southstar21dev.github.io/Volum/"><img src="docs/images/get-it-on-sidestore.png" height="64" alt="Get it on SideStore" /></a>
 
 </div>
 
@@ -25,7 +27,7 @@ reps filled in, so logging is mostly confirming and adjusting numbers.
 | Platform | How |
 |---|---|
 | **Android** | Tap the Obtainium badge above (or add `https://github.com/southstar21dev/Volum` in [Obtainium](https://github.com/ImranR98/Obtainium)). It installs Volum and keeps it updated. Or download the APK from the [latest release](https://github.com/southstar21dev/Volum/releases/latest). |
-| **iPhone** | Open **[southstar21dev.github.io/Volum](https://southstar21dev.github.io/Volum/)** on the iPhone and tap *Add to AltStore* or *Add to SideStore*. Or add the source `https://southstar21dev.github.io/Volum/altstore.json` by hand. |
+| **iPhone** | Tap the AltStore or SideStore badge above on the iPhone (it opens **[southstar21dev.github.io/Volum](https://southstar21dev.github.io/Volum/)**) and tap *Add to AltStore* or *Add to SideStore*. Or add the source `https://southstar21dev.github.io/Volum/altstore.json` by hand. |
 
 Release candidates from `staging` are published as pre-releases. To test them, enable *Include
 prereleases* in Obtainium, or use the `altstore-beta.json` source on iOS.
