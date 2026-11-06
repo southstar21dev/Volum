@@ -1,0 +1,114 @@
+name: Release
+
+# master: a release (v1.2.0). staging: a release candidate (v1.2.0-rc.1). semantic-release picks the
+# version from the commits since the last tag; if any warrant one, it builds the signed APK and the
+# unsigned IPA, tags the commit and publishes a GitHub Release with the changelog and both files.
+# Obtainium (Android) watches the releases directly; AltStore/SideStore (iOS) read the sources the
+# second job publishes to GitHub Pages.
+on:
+  push:
+    branches: [master, staging]
+  # Republishes the AltStore/SideStore sources without releasing, e.g. after editing a release.
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Semantic release
+    if: github.event_name == 'push'
+    # macOS: the IPA needs Xcode. The image also has the Android SDK for the APK.
+    runs-on: macos-26
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # semantic-release reads every tag and commit
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Install semantic-release and XcodeGen
+        run: |
+          npm ci
+          brew install xcodegen
+
+      - name: Restore the release key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is missing. See docs/RELEASING.md."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          echo "VOLUM_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Build, tag and publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VOLUM_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          VOLUM_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          VOLUM_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: npx semantic-release
+
+      - name: Remove the release key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
+
+  altstore-source:
+    name: AltStore/SideStore sources
+    needs: release
+    # Runs after every release attempt, cheap even when nothing was released. GitHub Pages needs a
+    # public repo on the free plan, so this skips while the repo is private.
+    if: ${{ !cancelled() && !github.event.repository.private && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}altstore.json
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+
+      - name: Build the sources from the GitHub Releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/altstore-source.mjs site
+          cp docs/site/index.html site/
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

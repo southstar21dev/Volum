@@ -1,0 +1,43 @@
+# Gradle / Kotlin
+.gradle/
+.kotlin/
+build/
+local.properties
+
+# Android
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.hprof
+output-metadata.json
+
+# iOS (the Xcode project is generated from iosApp/project.yml)
+iosApp/build/
+iosApp/*.xcodeproj/
+xcuserdata/
+*.ipa
+
+# Signing / secrets
+keystore.properties
+*.jks
+*.keystore
+*.p12
+*.pem
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+*.log
+
+# Build output and dependencies
+dist/
+node_modules/

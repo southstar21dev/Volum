@@ -1,0 +1,20 @@
+{
+  "name": "volum",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/southstar21dev/Volum.git"
+  },
+  "bugs": {
+    "url": "https://github.com/southstar21dev/Volum/issues"
+  },
+  "homepage": "https://github.com/southstar21dev/Volum#readme",
+  "private": true,
+  "devDependencies": {
+    "@semantic-release/exec": "^7.1.0",
+    "@semantic-release/npm": "file:tools/semantic-release-npm-stub",
+    "semantic-release": "^25.0.9"
+  },
+  "overrides": {
+    "@semantic-release/npm": "$@semantic-release/npm"
+  }
+}

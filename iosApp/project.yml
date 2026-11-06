@@ -1,0 +1,71 @@
+# The Xcode project is generated from this file: `cd iosApp && xcodegen`. Edit this, not iosApp.xcodeproj.
+name: iosApp
+options:
+  bundleIdPrefix: dev.southstar21
+  deploymentTarget:
+    iOS: "18.5"  # Compose Multiplatform's bundled ICU is built for 18.5
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    # The Gradle phase reads the repo and writes the framework outside the sandbox's declared outputs.
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+targets:
+  iosApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: iosApp
+    info:
+      path: iosApp/Info.plist
+      properties:
+        CFBundleDisplayName: Volum
+        CFBundleShortVersionString: VOLUM_VERSION_NAME
+        CFBundleVersion: VOLUM_VERSION_CODE
+        CADisableMinimumFrameDurationOnPhone: true
+        UIUserInterfaceStyle: Light
+        ITSAppUsesNonExemptEncryption: false
+        LSRequiresIPhoneOS: true
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+    settings:
+      base:
+        PRODUCT_NAME: Volum
+        PRODUCT_BUNDLE_IDENTIFIER: dev.southstar21.volum
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_PREPROCESS: YES
+        INFOPLIST_PREFIX_HEADER: "$(DERIVED_FILE_DIR)/VolumVersion.h"
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
+        "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": "-"
+        "ARCHS[sdk=iphonesimulator*]": arm64
+        FRAMEWORK_SEARCH_PATHS: "$(SRCROOT)/../shared/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)"
+        OTHER_LDFLAGS: ["$(inherited)", "-framework", "Shared", "-lsqlite3", "-lc++"]
+    preBuildScripts:
+      - name: Version from Gradle
+        basedOnDependencyAnalysis: false
+        shell: /bin/sh
+        outputFiles: ["$(DERIVED_FILE_DIR)/VolumVersion.h"]
+        script: |
+          # Same rule as androidApp's versionCode: 1.2.3 -> 1020399, 1.2.3-rc.4 -> 1020304.
+          set -e
+          FULL=$(sed -n 's/^volum.versionName=//p' "$SRCROOT/../gradle.properties")
+          NAME=${FULL%%-*}
+          RC=$(echo "$FULL" | sed -n 's/.*-rc\.\([0-9]*\)$/\1/p')
+          CODE=$(echo "$NAME" | awk -F'.' -v rc="${RC:-99}" '{ print ($1 * 10000 + $2 * 100 + $3) * 100 + rc }')
+          mkdir -p "$DERIVED_FILE_DIR"
+          printf '#define VOLUM_VERSION_NAME %s\n#define VOLUM_VERSION_CODE %s\n' "$NAME" "$CODE" > "$DERIVED_FILE_DIR/VolumVersion.h"
+      - name: Compile Kotlin framework
+        basedOnDependencyAnalysis: false
+        shell: /bin/sh
+        script: |
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            echo "Skipping Gradle build task invocation due to OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED"
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          ./gradlew :shared:embedAndSignAppleFrameworkForXcode

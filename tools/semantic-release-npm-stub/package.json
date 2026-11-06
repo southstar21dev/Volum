@@ -1,0 +1,8 @@
+{
+  "name": "@semantic-release/npm",
+  "version": "0.0.0-volum",
+  "description": "Placeholder: Volum doesn't publish to npm. semantic-release depends on @semantic-release/npm, which bundles a whole copy of npm (and its vulnerable dependencies), but only loads it when it's in the plugin list; .releaserc.json leaves it out.",
+  "private": true,
+  "type": "module",
+  "main": "index.js"
+}

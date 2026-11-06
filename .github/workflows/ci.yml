@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, staging, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Shared tests and Android release build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false # nothing here pushes; don't leave the token in .git/config
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      # The release build runs R8, catching missing keep rules before they reach a release.
+      - name: Tests and release build
+        run: ./gradlew :shared:testAndroidHostTest :androidApp:assembleRelease --continue --stacktrace
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: "**/build/reports/tests/"
+          retention-days: 7
+
+  ios:
+    name: iOS tests and device build
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false # nothing here pushes; don't leave the token in .git/config
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Kotlin/Native tests
+        run: ./gradlew :shared:iosSimulatorArm64Test --stacktrace
+
+      # The same unsigned device build the release makes for AltStore/SideStore.
+      - name: Build the app
+        run: |
+          (cd iosApp && xcodegen generate --quiet)
+          xcodebuild build -project iosApp/iosApp.xcodeproj -target iosApp -configuration Release -sdk iphoneos \
+            SYMROOT="$PWD/build/ios" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -quiet

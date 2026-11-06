@@ -1,0 +1,18 @@
+{
+  "branches": ["master", { "name": "staging", "prerelease": "rc" }],
+  "tagFormat": "v${version}",
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    ["@semantic-release/exec", { "prepareCmd": "scripts/build-release.sh ${nextRelease.version}" }],
+    ["@semantic-release/github", {
+      "assets": [
+        { "path": "build/release/*.apk", "label": "Volum ${nextRelease.version} for Android (APK)" },
+        { "path": "build/release/*.ipa", "label": "Volum ${nextRelease.version} for iOS (unsigned IPA, for AltStore/SideStore)" }
+      ],
+      "successComment": false,
+      "failComment": false,
+      "releasedLabels": false
+    }]
+  ]
+}
