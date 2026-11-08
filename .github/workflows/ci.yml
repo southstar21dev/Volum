@@ -87,7 +87,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-kotlin-native
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: Kotlin/Native tests
         run: ./gradlew :shared:iosSimulatorArm64Test --stacktrace
@@ -103,7 +108,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-kotlin-native
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: Install XcodeGen
         run: brew install xcodegen
