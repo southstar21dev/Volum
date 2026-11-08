@@ -1,13 +1,13 @@
 name: Release
 
-# master: a release (v1.2.0). staging: a release candidate (v1.2.0-rc.1). semantic-release picks the
-# version from the commits since the last tag; if any warrant one, it builds the signed APK and the
-# unsigned IPA, tags the commit and publishes a GitHub Release with the changelog and both files.
+# Each push to master can publish a release (v1.2.0). semantic-release picks the version from the
+# commits since the last tag; if any warrant one, it builds the signed APK and the unsigned IPA, tags
+# the commit and publishes a GitHub Release with the changelog and both files.
 # Obtainium (Android) watches the releases directly; AltStore/SideStore (iOS) read the sources the
 # second job publishes to GitHub Pages.
 on:
   push:
-    branches: [master, staging]
+    branches: [master]
   # Republishes the AltStore/SideStore sources without releasing, e.g. after editing a release.
   workflow_dispatch:
 
@@ -43,6 +43,16 @@ jobs:
           java-version: 17
 
       - uses: gradle/actions/setup-gradle@v6
+
+      # Same as in CI: the Kotlin/Native toolchain isn't in the Gradle home, so cache it separately.
+      - name: Kotlin version
+        id: kotlin
+        run: echo "version=$(sed -n 's/^kotlin = "\(.*\)"$/\1/p' gradle/libs.versions.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ runner.arch }}-${{ steps.kotlin.outputs.version }}
 
       - name: Install semantic-release and XcodeGen
         run: |

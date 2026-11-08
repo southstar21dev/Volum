@@ -120,9 +120,6 @@ pick your unit and background in the same place.
 | **Android** | Tap the Obtainium badge above (or add `https://github.com/southstar21dev/Volum` in [Obtainium](https://github.com/ImranR98/Obtainium)). It installs Volum and keeps it updated. Or download the APK from the [latest release](https://github.com/southstar21dev/Volum/releases/latest). Requires Android 8 or newer. |
 | **iPhone** | Tap the AltStore or SideStore badge above on the iPhone (it opens **[southstar21dev.github.io/Volum](https://southstar21dev.github.io/Volum/)**) and tap *Add to AltStore* or *Add to SideStore*. Or add the source `https://southstar21dev.github.io/Volum/altstore.json` by hand. Requires iOS 18.5 or newer. |
 
-Release candidates from `staging` are published as pre-releases. To test them, enable *Include
-prereleases* in Obtainium, or use the `altstore-beta.json` source on iOS.
-
 ## How it's built
 
 Kotlin Multiplatform with Compose Multiplatform. Every screen and feature lives in
