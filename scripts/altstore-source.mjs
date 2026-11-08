@@ -1,8 +1,6 @@
 #!/usr/bin/env node
 // Writes the AltStore/SideStore sources into the directory given as the first argument, built from
-// the repo's GitHub Releases (every release with an .ipa asset):
-//   altstore.json       releases from master only
-//   altstore-beta.json  also the release candidates from staging
+// the repo's GitHub Releases (every non-prerelease with an .ipa asset) into altstore.json.
 // Rebuilding from the releases each time keeps the sources in step with what's actually published,
 // so nothing has to be committed back to the repo. Needs GITHUB_REPOSITORY and GITHUB_TOKEN.
 import { mkdir, writeFile } from "node:fs/promises";
@@ -59,14 +57,12 @@ function toVersion(release) {
   };
 }
 
-function source({ beta, versions }) {
+function source(versions) {
   return {
-    name: beta ? "Volum (beta)" : "Volum",
-    identifier: beta ? "dev.southstar21.volum.source.beta" : "dev.southstar21.volum.source",
+    name: "Volum",
+    identifier: "dev.southstar21.volum.source",
     subtitle: "A strength training log.",
-    description: beta
-      ? "Volum releases and release candidates, straight from GitHub."
-      : "Volum releases, straight from GitHub.",
+    description: "Volum releases, straight from GitHub.",
     iconURL: `${raw}/iosApp/iosApp/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png`,
     website: `https://github.com/${repo}`,
     tintColor: tint,
@@ -96,9 +92,7 @@ const versions = (await releases())
   .sort((a, b) => b.date.localeCompare(a.date));
 
 await mkdir(outDir, { recursive: true });
-for (const beta of [false, true]) {
-  const included = beta ? versions : versions.filter((version) => !version.prerelease);
-  const file = join(outDir, beta ? "altstore-beta.json" : "altstore.json");
-  await writeFile(file, `${JSON.stringify(source({ beta, versions: included }), null, 2)}\n`);
-  console.log(`${file}: ${included.length} version(s)`);
-}
+const included = versions.filter((version) => !version.prerelease);
+const file = join(outDir, "altstore.json");
+await writeFile(file, `${JSON.stringify(source(included), null, 2)}\n`);
+console.log(`${file}: ${included.length} version(s)`);

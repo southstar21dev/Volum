@@ -7,8 +7,15 @@ GitHub builds, signs and publishes every release. Local builds are for developme
 | Push to | CI (`ci.yml`) | Release (`release.yml`) |
 |---|---|---|
 | `dev`, PRs | Shared tests, Android R8 build, iOS tests and device build | Nothing |
-| `staging` | Same | Release candidate, e.g. `v1.2.0-rc.1` (marked pre-release) |
 | `master` | Same | Release, e.g. `v1.2.0` |
+
+CI skips changes that only touch Markdown or `docs/`, skips the iOS jobs for changes only under
+`androidApp/`, and doesn't run again for a PR from `dev`, since the push already tested that commit.
+
+CI caches the Gradle home (dependencies, build cache, configuration cache) and, for the iOS jobs,
+the Kotlin/Native toolchain in `~/.konan`. Pushes to `dev` and `master` save the caches; PRs only
+read them. The toolchain cache is keyed on the Kotlin version, so a Kotlin upgrade downloads it once
+more.
 
 semantic-release reads the Conventional Commits since the last tag. If any warrant a release
 (`fix:`, `perf:`, `feat:`, breaking changes), it runs `scripts/build-release.sh`, which writes the
@@ -32,18 +39,14 @@ editing a release's notes.
 ### Android: Obtainium
 
 [Obtainium](https://github.com/ImranR98/Obtainium) installs apps from GitHub Releases and updates
-them automatically. Add `https://github.com/southstar21dev/Volum` as an app. To also get release
-candidates from `staging`, turn on *Include prereleases*.
+them automatically. Add `https://github.com/southstar21dev/Volum` as an app.
 
 ### iOS: AltStore or SideStore
 
 Open <https://southstar21dev.github.io/Volum/> on the iPhone and tap *Add to AltStore* or *Add to
 SideStore*, or add a source by hand:
 
-| Source | URL |
-|---|---|
-| Releases | `https://southstar21dev.github.io/Volum/altstore.json` |
-| Releases and release candidates | `https://southstar21dev.github.io/Volum/altstore-beta.json` |
+`https://southstar21dev.github.io/Volum/altstore.json`.
 
 Both apps then offer each new release as an update. With a free Apple ID, the app has to be
 refreshed every 7 days (AltStore/SideStore do this in the background).

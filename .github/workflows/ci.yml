@@ -2,8 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [dev, staging, master]
+    branches: [dev, master]
+    paths-ignore: ["**.md", "docs/**"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch:
 
 concurrency:
@@ -13,9 +15,45 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # setup-gradle only saves its cache on the default branch (master) by default, which CI rarely
+  # pushes to. Save it on dev too, so dev pushes and PRs into dev start from a warm cache.
+  GRADLE_CACHE_READ_ONLY: ${{ github.event_name == 'pull_request' || (github.ref != 'refs/heads/dev' && github.ref != 'refs/heads/master') }}
+
 jobs:
+  changes:
+    name: Changed paths
+    # A PR from dev tests the same commit its push run already tested, so skip it.
+    # Every other job needs this one, so they skip with it.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name != github.repository
+      || github.head_ref != 'dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      # A manual run has nothing to diff against, so it always builds iOS.
+      ios: ${{ steps.filter.outputs.ios == 'true' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          predicate-quantifier: every
+          filters: |
+            ios:
+              - "**"
+              - "!androidApp/**"
+
   android:
     name: Shared tests and Android release build
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -29,6 +67,8 @@ jobs:
           java-version: 17
 
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ env.GRADLE_CACHE_READ_ONLY }}
 
       # The release build runs R8, catching missing keep rules before they reach a release.
       - name: Tests and release build
@@ -42,14 +82,17 @@ jobs:
           path: "**/build/reports/tests/"
           retention-days: 7
 
-  ios:
-    name: iOS tests and device build
+  # The iOS tests and the app build are separate jobs so they run side by side.
+  ios-tests:
+    name: iOS tests
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
-          persist-credentials: false # nothing here pushes; don't leave the token in .git/config
+          persist-credentials: false
 
       - uses: actions/setup-java@v6
         with:
@@ -57,12 +100,69 @@ jobs:
           java-version: 17
 
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ env.GRADLE_CACHE_READ_ONLY }}
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      # The Kotlin/Native toolchain (LLVM, libffi) lives in ~/.konan, outside the Gradle home, so
+      # setup-gradle doesn't cache it. Without this, each iOS job spends ~7 min downloading it.
+      - name: Kotlin version
+        id: kotlin
+        run: echo "version=$(sed -n 's/^kotlin = "\(.*\)"$/\1/p' gradle/libs.versions.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Kotlin/Native toolchain
+        id: konan
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ runner.arch }}-${{ steps.kotlin.outputs.version }}
 
       - name: Kotlin/Native tests
         run: ./gradlew :shared:iosSimulatorArm64Test --stacktrace
+
+      # Only this job saves it (both iOS jobs need the same toolchain), and only from dev or master,
+      # whose caches every PR into them can read.
+      - name: Save the Kotlin/Native toolchain
+        if: steps.konan.outputs.cache-hit != 'true' && env.GRADLE_CACHE_READ_ONLY == 'false'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.konan
+          key: ${{ steps.konan.outputs.cache-primary-key }}
+
+  ios-build:
+    name: iOS device build
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ env.GRADLE_CACHE_READ_ONLY }}
+
+      # The Kotlin/Native toolchain (LLVM, libffi) lives in ~/.konan, outside the Gradle home, so
+      # setup-gradle doesn't cache it. Without this, each iOS job spends ~7 min downloading it.
+      - name: Kotlin version
+        id: kotlin
+        run: echo "version=$(sed -n 's/^kotlin = "\(.*\)"$/\1/p' gradle/libs.versions.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Kotlin/Native toolchain
+        id: konan
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ runner.arch }}-${{ steps.kotlin.outputs.version }}
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
 
       # The same unsigned device build the release makes for AltStore/SideStore.
       - name: Build the app

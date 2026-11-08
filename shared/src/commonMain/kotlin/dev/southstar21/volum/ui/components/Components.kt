@@ -60,6 +60,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.currentCompositionLocalContext
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -478,10 +479,13 @@ fun BackHandler(enabled: Boolean = true, onBack: () -> Unit) {
 @Composable
 fun BottomSheet(open: Boolean, onDismiss: () -> Unit, modifier: Modifier = Modifier, fill: Boolean = false, title: String? = null, content: @Composable ColumnScope.() -> Unit) {
     val progress = remember { Animatable(0f) }
+    val drag = remember { Animatable(0f) }
+    val isOpen by rememberUpdatedState(open)
     var mounted by remember { mutableStateOf(open) }
     LaunchedEffect(open) {
         if (open) {
             mounted = true
+            drag.snapTo(0f) // a drag-dismissed sheet keeps its offset while it slides out
             progress.animateTo(1f, Springs.sheet())
         } else {
             progress.animateTo(0f, tween(Durations.Fade, easing = Easings.Exit))
@@ -492,7 +496,6 @@ fun BottomSheet(open: Boolean, onDismiss: () -> Unit, modifier: Modifier = Modif
     val c = Volum.colors
     val scope = rememberCoroutineScope()
     var height by remember { mutableIntStateOf(1) }
-    val drag = remember { Animatable(0f) }
     Overlay {
         BackHandler(open) { onDismiss() }
         Box(Modifier.fillMaxSize()) {
@@ -519,8 +522,14 @@ fun BottomSheet(open: Boolean, onDismiss: () -> Unit, modifier: Modifier = Modif
                         rememberDraggableState { d -> scope.launch { drag.snapTo((drag.value + d).coerceAtLeast(0f)) } },
                         Orientation.Vertical,
                         onDragStopped = { v ->
-                            if (drag.value > height * 0.25f || v > 1200f) onDismiss()
-                            scope.launch { drag.animateTo(0f, Springs.snapBack()) }
+                            if (drag.value > height * 0.25f || v > 1200f) {
+                                // Don't spring back: the exit slides the sheet on down from where it
+                                // was let go. Only if the dismiss was refused does it return.
+                                onDismiss()
+                                withFrameNanos {}
+                                if (!isOpen) return@draggable
+                            }
+                            drag.animateTo(0f, Springs.snapBack())
                         },
                     )
                     .sheetGlass(RoundedCornerShape(40.dp))

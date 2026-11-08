@@ -5,15 +5,13 @@
 | Branch | Purpose |
 |---|---|
 | `dev` | Integration; feature branches merge here |
-| `staging` | Testing before production, promoted from `dev`; each promotion can publish a release candidate |
-| `master` | Production, promoted from `staging`; each promotion can publish a release |
+| `master` | Production, promoted from `dev`; each promotion can publish a release |
 
 1. Branch from `dev`, for example `feat/rest-timer`.
 2. Open a PR into `dev` and squash-merge it.
-3. To test a set of changes, open a PR from `dev` into `staging` and use a **merge commit**.
-4. To release, open a PR from `staging` into `master` and use a **merge commit**.
+3. To release, open a PR from `dev` into `master` and use a **merge commit**.
 
-Promotions need a merge commit so semantic-release can still see the individual commits.
+The promotion needs a merge commit so semantic-release can still see the individual commits.
 
 ## Commit messages
 

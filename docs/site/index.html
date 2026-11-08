@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Published to GitHub Pages by .github/workflows/release.yml, next to altstore.json and altstore-beta.json. -->
+<!-- Published to GitHub Pages by .github/workflows/release.yml next to altstore.json. -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -43,7 +43,6 @@
     <h2>iPhone</h2>
     <a class="button" id="altstore" href="#">Add to AltStore</a>
     <a class="button" id="sidestore" href="#">Add to SideStore</a>
-    <a class="button secondary" id="sidestore-beta" href="#">SideStore, with release candidates</a>
 
     <h2>Android</h2>
     <a class="button" href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/southstar21dev/Volum">Add to Obtainium</a>
@@ -54,10 +53,8 @@
   <script>
     const base = new URL(".", location.href).href;
     const stable = base + "altstore.json";
-    const beta = base + "altstore-beta.json";
     document.getElementById("altstore").href = "altstore://source?url=" + encodeURIComponent(stable);
     document.getElementById("sidestore").href = "sidestore://source?url=" + encodeURIComponent(stable);
-    document.getElementById("sidestore-beta").href = "sidestore://source?url=" + encodeURIComponent(beta);
     const link = document.getElementById("source-url");
     link.textContent = stable;
     link.href = stable;
