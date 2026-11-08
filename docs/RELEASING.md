@@ -10,6 +10,10 @@ GitHub builds, signs and publishes every release. Local builds are for developme
 | `staging` | Same | Release candidate, e.g. `v1.2.0-rc.1` (marked pre-release) |
 | `master` | Same | Release, e.g. `v1.2.0` |
 
+CI skips changes that only touch Markdown or `docs/`, skips the iOS jobs for changes only under
+`androidApp/`, and doesn't run again for a PR from `dev` or `staging`, since the push already tested
+that commit.
+
 semantic-release reads the Conventional Commits since the last tag. If any warrant a release
 (`fix:`, `perf:`, `feat:`, breaking changes), it runs `scripts/build-release.sh`, which writes the
 version into `gradle.properties` and builds:
