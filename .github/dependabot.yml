@@ -19,7 +19,7 @@ updates:
         patterns: ["io.ktor*"]
 
   - package-ecosystem: github-actions
-    directory: /
+    directories: ["/", "/.github/actions/*"] # the workflows and the composite actions they use
     target-branch: dev
     schedule:
       interval: weekly

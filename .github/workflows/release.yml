@@ -37,12 +37,7 @@ jobs:
           node-version: lts/*
           cache: npm
 
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: ./.github/actions/setup-kotlin-native
 
       - name: Install semantic-release and XcodeGen
         run: |

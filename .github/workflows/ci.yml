@@ -3,7 +3,9 @@ name: CI
 on:
   push:
     branches: [dev, staging, master]
+    paths-ignore: ["**.md", "docs/**"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch:
 
 concurrency:
@@ -14,8 +16,39 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Changed paths
+    # A PR from dev or staging tests the same commit its push run already tested, so skip it.
+    # Every other job needs this one, so they skip with it.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name != github.repository
+      || (github.head_ref != 'dev' && github.head_ref != 'staging')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      # A manual run has nothing to diff against, so it always builds iOS.
+      ios: ${{ steps.filter.outputs.ios == 'true' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          predicate-quantifier: every
+          filters: |
+            ios:
+              - "**"
+              - "!androidApp/**"
+
   android:
     name: Shared tests and Android release build
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -42,27 +75,38 @@ jobs:
           path: "**/build/reports/tests/"
           retention-days: 7
 
-  ios:
-    name: iOS tests and device build
+  # The iOS tests and the app build are separate jobs so they run side by side.
+  ios-tests:
+    name: iOS tests
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
-          persist-credentials: false # nothing here pushes; don't leave the token in .git/config
+          persist-credentials: false
 
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - uses: gradle/actions/setup-gradle@v6
-
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - uses: ./.github/actions/setup-kotlin-native
 
       - name: Kotlin/Native tests
         run: ./gradlew :shared:iosSimulatorArm64Test --stacktrace
+
+  ios-build:
+    name: iOS device build
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-kotlin-native
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
 
       # The same unsigned device build the release makes for AltStore/SideStore.
       - name: Build the app
