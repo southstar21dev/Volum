@@ -5,6 +5,7 @@ import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -51,7 +52,10 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
+import com.kyant.backdrop.Backdrop
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavEntry
@@ -60,7 +64,6 @@ import androidx.navigation3.ui.LocalNavAnimatedContentScope
 import androidx.navigation3.ui.NavDisplay
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import com.kyant.backdrop.isRenderEffectSupported
 import dev.southstar21.volum.data.AppContainer
 import dev.southstar21.volum.data.UserSession
 import dev.southstar21.volum.model.VolumJson
@@ -72,6 +75,7 @@ import dev.southstar21.volum.ui.auth.AuthScreen
 import dev.southstar21.volum.ui.auth.OnboardingScreen
 import dev.southstar21.volum.ui.components.EdgeBlur
 import dev.southstar21.volum.ui.components.GlassRoot
+import dev.southstar21.volum.ui.components.glassEffects
 import dev.southstar21.volum.ui.components.LocalBackdrop
 import dev.southstar21.volum.ui.components.LocalOverlayHost
 import dev.southstar21.volum.ui.components.OverlayHost
@@ -309,13 +313,7 @@ private fun MainShell(overlays: OverlayHost) {
                 )
             }
             EdgeBlur(content, top = true, height = statusBar + 18.dp, solid = statusBar, modifier = Modifier.align(Alignment.TopCenter))
-            // At the tab roots the dock floats over the list; elsewhere only the system bar needs it.
-            EdgeBlur(
-                content, top = false,
-                height = if (atRoot) navBar + 104.dp else navBar + 12.dp,
-                solid = if (atRoot) navBar + 64.dp else navBar,
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
+            BottomStrip(content, atRoot, navBar, Modifier.align(Alignment.BottomCenter))
             if (navbar == null) {
                 AndroidDock(
                     visible = dockVisible,
@@ -328,6 +326,27 @@ private fun MainShell(overlays: OverlayHost) {
             }
         }
     }
+}
+
+/**
+ * The frosted strip along the bottom. At the tab roots the dock floats over the list, so it's tall;
+ * elsewhere only the system bar needs it. It grows and shrinks over the page transition rather than
+ * jumping at its first frame, which showed as a flash under the page still on screen. Its own
+ * composable, so the per-frame height recomposes only the strip, not the shell.
+ */
+@Composable
+private fun BottomStrip(content: Backdrop, atRoot: Boolean, navBar: Dp, modifier: Modifier) {
+    val dock by animateFloatAsState(
+        if (atRoot) 1f else 0f,
+        tween(Durations.Page, easing = Easings.Standard),
+        label = "bottomStrip",
+    )
+    EdgeBlur(
+        content, top = false,
+        height = navBar + lerp(12.dp, 104.dp, dock),
+        solid = navBar + lerp(0.dp, 64.dp, dock),
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -461,7 +480,7 @@ private fun AndroidDock(visible: Boolean, selected: Tab, showAction: Boolean, on
             selection = androidx.compose.ui.graphics.Color(0xFF5F7F45).copy(alpha = 0.24f),
             modifier = Modifier.weight(1f),
             height = 62.dp,
-            frosted = !isRenderEffectSupported(),
+            frosted = !glassEffects(),
             onCross = { hapticTick() },
         ) { index, tinted ->
             // As on iOS, only the colour (and the icon's fill) changes: the label keeps its weight.

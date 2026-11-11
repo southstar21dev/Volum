@@ -3,7 +3,6 @@ package dev.southstar21.volum.ui.components
 import dev.southstar21.volum.platform.nativeSegmented
 import dev.southstar21.volum.platform.hapticTick
 import dev.southstar21.volum.ui.liquid.LiquidTabs
-import com.kyant.backdrop.isRenderEffectSupported
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
@@ -315,7 +314,7 @@ fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, mod
         selection = c.soft,
         modifier = modifier.then(if (fill) Modifier.fillMaxWidth() else Modifier.width(segment * options.size + 8.dp)),
         height = height + 8.dp,
-        frosted = !isRenderEffectSupported(),
+        frosted = !glassEffects(),
         nested = LocalInGlass.current,
         surface = { shape ->
             drawRect(Brush.verticalGradient(listOf(c.liquidTop, c.liquidBottom)))

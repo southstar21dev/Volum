@@ -110,6 +110,11 @@ class FieldInfo {
 
 val LocalField = staticCompositionLocalOf { FieldInfo() }
 
+/** A node's latest placement, read while drawing (not state, so reading it never schedules a frame). */
+private class Placed {
+    var coordinates: androidx.compose.ui.layout.LayoutCoordinates? = null
+}
+
 /**
  * A frosted strip along the top or bottom edge: the field with [content] blurred over it, fading out
  * toward the middle of the screen, so scrolled content doesn't run sharp under the status bar or dock.
@@ -120,17 +125,22 @@ val LocalField = staticCompositionLocalOf { FieldInfo() }
 fun EdgeBlur(content: Backdrop, top: Boolean, height: Dp, solid: Dp, modifier: Modifier = Modifier) {
     val c = Volum.colors
     val field = LocalField.current
+    // Where the strip sits is read live while drawing. As state alone it arrived a frame late: the
+    // frame after the strip resized painted the field at the old offset, a band that flashed at the
+    // edge on every page push and pop. The state copy stays so a move on its own still redraws.
     var y by remember { mutableFloatStateOf(0f) }
-    val blur = isRenderEffectSupported()
+    val placed = remember { Placed() }
+    val blur = glassEffects()
     Box(
         modifier
             .fillMaxWidth()
             .height(height)
-            .onGloballyPositioned { y = it.positionInRoot().y }
+            .onGloballyPositioned { placed.coordinates = it; y = it.positionInRoot().y }
             .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
             .drawWithContent {
                 val fs = field.size
-                if (fs.width > 0) translate(0f, -y) { drawField(c, field.solid, fs.width.toFloat(), fs.height.toFloat()) }
+                val at = placed.coordinates?.takeIf { it.isAttached }?.positionInRoot()?.y ?: y
+                if (fs.width > 0) translate(0f, -at) { drawField(c, field.solid, fs.width.toFloat(), fs.height.toFloat()) }
                 drawContent()
                 val keep = (solid.toPx() / size.height).coerceIn(0f, 1f)
                 val mask = if (top) {
@@ -282,7 +292,7 @@ private fun Modifier.nestedCard(shape: Shape): Modifier {
 private fun Modifier.fieldCard(shape: Shape): Modifier {
     val c = Volum.colors
     val rim = Brush.verticalGradient(listOf(c.spec, c.rim, c.rim))
-    if (!isRenderEffectSupported()) {
+    if (!glassEffects()) {
         return this
             .outerShadow(shape, Shadow(radius = 24.dp, color = c.drop, offset = DpOffset(0.dp, 12.dp)))
             .background(c.glass.copy(alpha = (c.glass.alpha * 1.6f).coerceAtMost(1f)), shape)
@@ -407,7 +417,7 @@ private fun Modifier.fieldLiquid(shape: Shape, tint: Color?): Modifier {
     val backdrop = LocalBackdrop.current
     val fill = Brush.verticalGradient(listOf(c.liquidTop, c.liquidBottom))
     val rim = Brush.verticalGradient(listOf(c.spec, c.liquidRim))
-    if (!isRenderEffectSupported()) {
+    if (!glassEffects()) {
         return this
             .outerShadow(shape, Shadow(radius = 18.dp, color = c.drop, offset = DpOffset(0.dp, 8.dp), spread = (-6).dp))
             .background(c.sheet, shape)
@@ -442,7 +452,7 @@ fun Modifier.sheetGlass(shape: Shape): Modifier {
     val c = Volum.colors
     val backdrop = LocalBackdrop.current
     val rim = Brush.verticalGradient(listOf(c.spec, c.liquidRim))
-    if (!isRenderEffectSupported()) {
+    if (!glassEffects()) {
         return this
             .outerShadow(shape, Shadow(radius = 30.dp, color = c.drop, offset = DpOffset(0.dp, (-6).dp), spread = (-8).dp))
             .background(c.sheet.copy(alpha = 0.96f), shape)
@@ -538,3 +548,13 @@ fun Modifier.neuOut(shape: Shape): Modifier {
 
 @Suppress("unused")
 private fun keepMax(a: Float, b: Float) = max(a, b)
+
+/**
+ * Whether glass refracts and blurs what's behind it (the backdrop library's render effects) or takes
+ * the frosted look: translucent fills with drawn rims and shadows. Frosted on every platform: it reads
+ * cleaner, and on iOS the live effects began dropping whole frames after a while (a page left half
+ * drawn for a frame, seen as flashing).
+ */
+fun glassEffects(): Boolean = LiveGlass && isRenderEffectSupported()
+
+private const val LiveGlass = false
