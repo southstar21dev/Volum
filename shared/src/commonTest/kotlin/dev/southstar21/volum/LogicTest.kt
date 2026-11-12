@@ -7,6 +7,7 @@ import dev.southstar21.volum.data.cleanRecord
 import dev.southstar21.volum.data.decodeRecord
 import dev.southstar21.volum.data.mergeWorkoutEntries
 import dev.southstar21.volum.data.stampChangedSets
+import dev.southstar21.volum.model.Exercise
 import dev.southstar21.volum.model.SetEntry
 import dev.southstar21.volum.model.VolumJson
 import dev.southstar21.volum.model.WeightUnit
@@ -17,6 +18,8 @@ import dev.southstar21.volum.progress.BestSet
 import dev.southstar21.volum.progress.compareBest
 import dev.southstar21.volum.progress.formatLoad
 import dev.southstar21.volum.progress.topSetSeries
+import dev.southstar21.volum.ui.session.filterDecimal
+import dev.southstar21.volum.ui.session.parseNumber
 import dev.southstar21.volum.model.SetTag
 import dev.southstar21.volum.model.WorkoutStatus
 import dev.southstar21.volum.util.convert
@@ -77,6 +80,14 @@ class LogicTest {
         assertTrue(cleanRecord(VolumJson.parseToJsonElement(json).jsonObject)["finishedAt"] == null)
     }
 
+    @Test fun emptyRequiredTextFieldStillDecodes() {
+        // PocketBase sends a blank required text field as ""; the record must not be dropped for it.
+        val json = """{"id":"x1","owner":"u1","name":"","timed":null,"updatedAt":"2026-01-01 10:00:00.000Z","deleted":false,"updated":""}"""
+        val e = decodeRecord(Exercise.serializer(), VolumJson.parseToJsonElement(json).jsonObject)
+        assertEquals("", e?.name)
+        assertEquals(null, e?.updated)
+    }
+
     @Test fun filterQuotesValues() {
         assertEquals("owner = 'a\\'b'", PocketBase.filter("owner = {:o}", mapOf("o" to "a'b")))
     }
@@ -116,5 +127,17 @@ class LogicTest {
         assertEquals(listOf("a", "b"), series.map { it.workoutId })
         assertEquals(listOf(60.0, 67.5), series.map { it.value })
         assertEquals(5, series.last().reps)
+    }
+
+    @Test fun weightTypedFromTheSeparatorKeepsItsValue() {
+        // Typed one character at a time, as the field sees it: nothing may be inserted ahead of the cursor.
+        fun typed(text: String) = text.fold("") { acc, ch -> filterDecimal(acc + ch) }
+        assertEquals(".5", typed(".5"))
+        assertEquals(0.5, parseNumber(typed(".5")))
+        assertEquals(0.75, parseNumber(typed(",75")))
+        assertEquals(62.5, parseNumber(typed("62,5")))
+        assertEquals(62.0, parseNumber(typed("62.")))
+        assertEquals(0.0, parseNumber(typed(".")), "a lone separator is no weight")
+        assertEquals("1.25", typed("1.255x"))
     }
 }

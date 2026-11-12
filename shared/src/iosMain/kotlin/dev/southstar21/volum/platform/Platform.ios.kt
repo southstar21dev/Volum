@@ -20,8 +20,11 @@ actual fun appDataDirectory(): String {
 }
 
 actual fun createHttpClient(): HttpClient = HttpClient(Darwin) {
+    installTimeouts()
     engine {
-        configureRequest { setTimeoutInterval(60.0) }
+        // Each request's idle timeout comes from installTimeouts (the realtime stream's is unbounded).
+        // The session-wide default is raised so it can't cut the stream off at 60 s regardless.
+        configureSession { timeoutIntervalForRequest = 24 * 60 * 60.0 }
     }
     expectSuccess = false
 }

@@ -1,5 +1,7 @@
 package dev.southstar21.volum.ui.lifts
 
+import dev.southstar21.volum.data.MAX_EXERCISE_NAME
+import dev.southstar21.volum.data.nameClash
 import androidx.compose.foundation.Canvas
 import dev.southstar21.volum.ui.theme.T
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -57,7 +59,7 @@ import androidx.compose.ui.unit.em
 import dev.southstar21.volum.model.WeightUnit
 import dev.southstar21.volum.progress.ChartPoint
 import dev.southstar21.volum.progress.ChartRange
-import dev.southstar21.volum.progress.buildChartSeries
+import dev.southstar21.volum.progress.bestSetIn
 import dev.southstar21.volum.progress.filterRange
 import dev.southstar21.volum.progress.workoutTime
 import dev.southstar21.volum.data.lastTopSetLabel
@@ -67,7 +69,6 @@ import dev.southstar21.volum.ui.LocalNav
 import dev.southstar21.volum.ui.LocalSession
 import dev.southstar21.volum.ui.Route
 import dev.southstar21.volum.ui.exercisesState
-import dev.southstar21.volum.ui.lastDoneLabel
 import dev.southstar21.volum.ui.rememberNow
 import dev.southstar21.volum.ui.workoutsState
 import dev.southstar21.volum.ui.components.ActionSheet
@@ -76,6 +77,7 @@ import dev.southstar21.volum.ui.components.BottomSheet
 import dev.southstar21.volum.ui.components.CircleButton
 import dev.southstar21.volum.ui.components.ConfirmSheet
 import dev.southstar21.volum.ui.components.Divider
+import dev.southstar21.volum.ui.components.ErrorText
 import dev.southstar21.volum.ui.components.GlassCard
 import dev.southstar21.volum.ui.components.Mute
 import dev.southstar21.volum.ui.components.Pill
@@ -114,6 +116,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.graphics.drawscope.clipRect
 import dev.southstar21.volum.model.Exercise
+import dev.southstar21.volum.model.SetTag
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.saveable.rememberSaveable
 import dev.southstar21.volum.progress.topSetSeries
 import dev.southstar21.volum.ui.components.accentGel
 import dev.southstar21.volum.ui.theme.Durations
@@ -140,13 +145,15 @@ fun LiftsScreen() {
     val exercises by session.exercisesState()
     val workouts by session.workoutsState()
     val c = Volum.colors
-    var query by remember { mutableStateOf("") }
+    var query by rememberSaveable { mutableStateOf("") }
     var sort by remember { mutableStateOf(LiftSort.Alphabetical) }
     var sortMenu by remember { mutableStateOf(false) }
     val list = rememberLazyListState()
 
     // Each lift's top set per session, oldest first: the rail's bars and the rows' trend lines.
     val series = remember(workouts) { topSetSeries(workouts.values, session.user.id) }
+    // What the rail and the trend lines draw: each lift's points in the shape of its latest session.
+    val shaped = remember(series) { series.mapValues { (_, points) -> latestShape(points) } }
     val lastEntries = remember(workouts) { session.repository.lastEntries() }
     val live = remember(exercises) { exercises.values.filter { !it.deleted } }
     val visible = remember(live, query, sort, series) {
@@ -180,14 +187,23 @@ fun LiftsScreen() {
             }
             item(key = "search", contentType = "search") {
                 Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp).riseIn(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // The end padding is narrower so the clear button's 48dp touch area fits: its visible
+                    // circle still sits 16dp from the edge.
                     Row(
-                        Modifier.weight(1f).height(48.dp).liquidGlass(RoundedCornerShape(24.dp)).padding(horizontal = 16.dp),
+                        Modifier.weight(1f).height(48.dp).liquidGlass(RoundedCornerShape(24.dp)).padding(start = 16.dp, end = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(Icons.Search, c.mute, size = 20.dp)
                         Spacer(Modifier.width(10.dp))
                         BareField(query, { query = it }, Modifier.weight(1f), placeholder = "Search", size = T.BodyLarge, weight = androidx.compose.ui.text.font.FontWeight.Normal, imeAction = androidx.compose.ui.text.input.ImeAction.Search, label = "Search exercises")
-                        if (query.isNotEmpty()) CircleButton(Icons.X, "Clear search", size = 30.dp, iconSize = 14.dp) { query = "" }
+                        if (query.isNotEmpty()) {
+                            Box(
+                                Modifier.size(48.dp).tappable { query = "" }.semantics { contentDescription = "Clear search" },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Box(Modifier.size(30.dp).liquidGlass(CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.X, c.ink, size = 14.dp) }
+                            }
+                        }
                     }
                     CircleButton(Icons.Sort, if (sort == LiftSort.Alphabetical) "Sort, A to Z" else "Sort, recently done first", size = 48.dp, tint = c.accent) { sortMenu = true }
                 }
@@ -197,7 +213,8 @@ fun LiftsScreen() {
                 item(key = "recent", contentType = "rail") {
                     LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(recent, key = { it.id }) { ex ->
-                            RecentTile(ex.name, series[ex.id].orEmpty(), ex.isTimed, prefs.unit) { nav.push(Route.ExerciseDetail(ex.id)) }
+                            val (timed, points) = shaped.getValue(ex.id)
+                            RecentTile(ex.name, points, timed, prefs.unit) { nav.push(Route.ExerciseDetail(ex.id)) }
                         }
                     }
                 }
@@ -226,8 +243,8 @@ fun LiftsScreen() {
                             group.forEachIndexed { i, ex ->
                                 androidx.compose.runtime.key(ex.id) {
                                     if (i > 0) Divider(inset = 14.dp)
-                                    val points = series[ex.id].orEmpty()
-                                    val label = lastEntries[ex.id]?.let { lastTopSetLabel(it.sets, ex.isTimed) }
+                                    val points = shaped[ex.id]?.second.orEmpty()
+                                    val label = lastEntries[ex.id]?.let { lastTopSetLabel(it.sets, it.isTimed) }
                                     Row(
                                         Modifier.fillMaxWidth().tappable { nav.push(Route.ExerciseDetail(ex.id)) }.padding(horizontal = 14.dp, vertical = 11.dp),
                                         verticalAlignment = Alignment.CenterVertically,
@@ -263,6 +280,16 @@ fun LiftsScreen() {
 @Composable
 private fun ListLabel(text: String, modifier: Modifier = Modifier) {
     Txt(text, modifier.padding(start = 22.dp, end = 22.dp, bottom = 8.dp).riseIn(14f), size = T.Small, weight = ExtraBold, color = Volum.colors.accent, tracking = 0.02.em)
+}
+
+/**
+ * The shape of the latest session, and the points logged in that shape, so seconds and kilograms never
+ * share a scale. [ChartPoint.timed] is how the entry was logged, not the lift's current setting:
+ * switching a lift between reps and time leaves older entries as they were.
+ */
+private fun latestShape(points: List<ChartPoint>): Pair<Boolean, List<ChartPoint>> {
+    val timed = points.lastOrNull()?.timed ?: false
+    return timed to points.filter { it.timed == timed }
 }
 
 /** A recently trained lift: its last top set big, and its last six sessions as bars, the latest in forest. */
@@ -355,11 +382,15 @@ fun ExerciseDetailScreen(exerciseId: String) {
     val name = exercise?.name ?: firstEntry?.name ?: "Exercise"
     val timed = exercise?.isTimed ?: firstEntry?.isTimed ?: false
     val unit = prefs.unit
-    val series = remember(own, timed) { buildChartSeries(own, exerciseId, timed) }
+    // The same top sets as the Lifts list, keeping the sessions logged in the lift's current shape.
+    val series = remember(workouts, timed) {
+        topSetSeries(own, session.user.id)[exerciseId].orEmpty().filter { it.timed == timed }
+    }
     var range by remember { mutableStateOf(ChartRange.M3) }
     val shown = filterRange(series, range, now).ifEmpty { if (range == ChartRange.All) emptyList() else series.takeLast(1) }
     var menu by remember { mutableStateOf(false) }
-    var renaming by remember { mutableStateOf(false) }
+    var renaming by rememberSaveable { mutableStateOf(false) }
+    var draft by rememberSaveable { mutableStateOf(name) }
     var archive by remember { mutableStateOf(false) }
 
     fun display(kg: Double): Double = if (timed) kg else convert(kg, WeightUnit.Kg, unit)
@@ -403,14 +434,16 @@ fun ExerciseDetailScreen(exerciseId: String) {
             }
             Mute(if (timed) "Longest hold per session." else "Capsules show reps on the top set.", Modifier.padding(start = 4.dp, top = 6.dp), size = T.Caption)
         }
+        val sessions = remember(own) { own.filter { it.finishedAt != null && !it.deleted && it.entries.any { e -> e.exerciseId == exerciseId && !e.isSkipped } }.sortedByDescending { workoutTime(it) } }
         Row(Modifier.padding(start = 22.dp, end = 22.dp, top = 18.dp, bottom = 10.dp), verticalAlignment = Alignment.Bottom) {
             Txt("Session history", Modifier.weight(1f), size = T.Subhead, weight = Bold)
-            Mute(plural(series.size, "session"), weight = Semibold)
+            Mute(plural(sessions.size, "session"), weight = Semibold)
         }
-        val sessions = remember(own) { own.filter { it.finishedAt != null && !it.deleted && it.entries.any { e -> e.exerciseId == exerciseId && !e.isSkipped } }.sortedByDescending { workoutTime(it) } }
         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             sessions.take(30).forEach { w ->
-                val entry = w.entries.first { it.exerciseId == exerciseId }
+                val entry = w.entries.first { it.exerciseId == exerciseId && !it.isSkipped }
+                // Each session reads in the shape it was logged in.
+                val entryTimed = entry.isTimed
                 GlassCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), padding = androidx.compose.foundation.layout.PaddingValues(horizontal = 18.dp, vertical = 12.dp), onClick = { nav.push(Route.WorkoutDetail(w.id)) }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Txt("${shortDate(workoutTime(w))} · ${w.routineName}", Modifier.weight(1f), size = T.Body, weight = Bold, maxLines = 1)
@@ -419,10 +452,15 @@ fun ExerciseDetailScreen(exerciseId: String) {
                     Spacer(Modifier.height(2.dp))
                     // As in the mockup: numbered set lines with a dotted leader, the top set in forest.
                     val done = entry.sets.filter { it.done }
-                    val top = done.maxByOrNull { if (timed) (it.seconds ?: 0).toDouble() else toKg(it.weight, it.unit) }
+                    // The top set as History marks it: the best working set, or the longest hold. Warm-ups never count.
+                    val topId = if (entryTimed) {
+                        done.filter { it.tag != SetTag.Warmup && (it.seconds ?: 0) > 0 }.maxByOrNull { it.seconds ?: 0 }?.id
+                    } else {
+                        bestSetIn(listOf(w), exerciseId, Int.MAX_VALUE)?.let { b -> done.firstOrNull { it.tag != SetTag.Warmup && toKg(it.weight, it.unit) == b.weightKg && it.reps == b.reps }?.id }
+                    }
                     done.forEachIndexed { i, s ->
                         val v = convert(s.weight, s.unit, unit)
-                        SetLine("${i + 1}", if (timed) formatSeconds(s.seconds ?: 0) else "${formatWeightValue(v)} ${unit.label} × ${s.reps}", strong = s === top)
+                        SetLine("${i + 1}", if (entryTimed) formatSeconds(s.seconds ?: 0) else "${formatWeightValue(v)} ${unit.label} × ${s.reps}", strong = s.id == topId)
                     }
                 }
             }
@@ -434,7 +472,8 @@ fun ExerciseDetailScreen(exerciseId: String) {
         open = menu,
         title = name,
         actions = listOf(
-            SheetAction("Rename", Icons.Pencil) { renaming = true },
+            // Each opening starts from the current name, not a cancelled draft.
+            SheetAction("Rename", Icons.Pencil) { draft = name; renaming = true },
             SheetAction(if (timed) "Track as reps" else "Track as time (seconds)", Icons.Timer) {
                 exercise?.let { e -> scope.launch { session.repository.saveExercise(e.id, e.name, !timed) } }
             },
@@ -442,18 +481,21 @@ fun ExerciseDetailScreen(exerciseId: String) {
         ),
         onDismiss = { menu = false },
     )
-    var draft by remember { mutableStateOf(name) }
-    // Each opening starts from the current name, not a cancelled draft.
-    LaunchedEffect(renaming) { if (renaming) draft = name }
     BottomSheet(open = renaming, onDismiss = { renaming = false }, title = "Rename exercise") {
         Txt("Rename exercise", Modifier.padding(horizontal = 6.dp), size = T.SheetTitle, weight = ExtraBold)
         Spacer(Modifier.height(12.dp))
         Box(Modifier.fillMaxWidth().milky(RoundedCornerShape(20.dp)).padding(horizontal = 18.dp, vertical = 16.dp)) {
-            BareField(draft, { draft = it }, Modifier.fillMaxWidth(), placeholder = "Exercise name", imeAction = androidx.compose.ui.text.input.ImeAction.Done, label = "Exercise name")
+            BareField(draft, { draft = it.take(MAX_EXERCISE_NAME) }, Modifier.fillMaxWidth(), placeholder = "Exercise name", imeAction = androidx.compose.ui.text.input.ImeAction.Done, label = "Exercise name")
         }
+        val newName = draft.trim()
+        // Two of your lifts with one name would be ambiguous wherever exercises are matched by name.
+        // Other people's lifts don't count: the library is shared by every account.
+        val clash = nameClash(exercises, session.user.id, exerciseId, newName)
+        clash?.let { ErrorText("There's already a lift called ${it.name}.", Modifier.padding(8.dp)) }
         Spacer(Modifier.height(14.dp))
-        PrimaryButton("Save", enabled = draft.isNotBlank()) {
-            exercise?.let { e -> scope.launch { session.repository.saveExercise(e.id, draft.trim(), e.timed) } }
+        PrimaryButton("Save", enabled = newName.isNotEmpty() && clash == null) {
+            // Routine items carry their own copy of the name, so the rename reaches them too.
+            if (newName != exercise?.name) exercise?.let { e -> scope.launch { session.repository.renameExercise(e.id, newName) } }
             renaming = false
         }
     }

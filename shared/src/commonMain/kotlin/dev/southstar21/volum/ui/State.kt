@@ -13,7 +13,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import dev.southstar21.volum.data.Repository
 import dev.southstar21.volum.data.UserSession
+import dev.southstar21.volum.data.lastTopSetLabel
 import dev.southstar21.volum.model.Exercise
 import dev.southstar21.volum.model.Routine
 import dev.southstar21.volum.model.Workout
@@ -26,6 +28,18 @@ import kotlinx.datetime.daysUntil
 @Composable fun UserSession.exercisesState(): State<Map<String, Exercise>> = store.exercises.collectAsStateWithLifecycle()
 @Composable fun UserSession.routinesState(): State<Map<String, Routine>> = store.routines.collectAsStateWithLifecycle()
 @Composable fun UserSession.workoutsState(): State<Map<String, Workout>> = store.workouts.collectAsStateWithLifecycle()
+
+/** Each exercise's top set the last time it was done, keyed by exercise id; never-done ones are left out. */
+fun UserSession.lastTopSetLabels(exercises: Collection<Exercise>): Map<String, String> =
+    repository.lastTopSetLabels(exercises.map { it.id to it.isTimed })
+
+/**
+ * Last time's top set for each exercise id, read as timed or not by the paired flag (an entry may be
+ * logged in a different shape than its exercise is tracked in now); never-done ones are left out.
+ */
+fun Repository.lastTopSetLabels(exercises: List<Pair<String, Boolean>>): Map<String, String> = buildMap {
+    for ((id, timed) in exercises) lastEntryFor(id)?.let { lastTopSetLabel(it.sets, timed) }?.let { put(id, it) }
+}
 
 /**
  * [compute] at [tick], recomputed in step with [keys] (synchronously, so a data change shows in the

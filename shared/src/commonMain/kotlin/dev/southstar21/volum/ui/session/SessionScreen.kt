@@ -49,7 +49,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
-import dev.southstar21.volum.data.lastTopSetLabel
 import dev.southstar21.volum.model.Exercise
 import dev.southstar21.volum.model.SetEntry
 import dev.southstar21.volum.model.WeightUnit
@@ -65,6 +64,7 @@ import dev.southstar21.volum.ui.LocalNav
 import dev.southstar21.volum.ui.LocalSession
 import dev.southstar21.volum.ui.Route
 import dev.southstar21.volum.ui.exercisesState
+import dev.southstar21.volum.ui.lastTopSetLabels
 import dev.southstar21.volum.ui.routinesState
 import dev.southstar21.volum.ui.components.ScreenTitle
 import dev.southstar21.volum.ui.components.rememberLast
@@ -95,11 +95,11 @@ import dev.southstar21.volum.ui.theme.Semibold
 import dev.southstar21.volum.ui.theme.Volum
 import dev.southstar21.volum.ui.theme.tappable
 import dev.southstar21.volum.ui.theme.celebrate
-import dev.southstar21.volum.ui.theme.animatedNumber
+import dev.southstar21.volum.ui.theme.AnimatedNumber
 import kotlin.math.roundToInt
 import dev.southstar21.volum.util.elapsedLabel
 import dev.southstar21.volum.util.formatVolume
-import dev.southstar21.volum.util.newId
+import dev.southstar21.volum.util.nowMillis
 import dev.southstar21.volum.util.parseTime
 import dev.southstar21.volum.util.plural
 import kotlinx.coroutines.launch
@@ -225,11 +225,18 @@ fun SessionScreen(workoutId: String) {
     if (liveActive) lastActive[0] = live
     val workout = if (liveActive) live else if (leaving) lastActive[0] else null
     fun leave(commit: suspend () -> Unit) {
+        // Once: the buttons stay tappable while the screen slides away, and a second finish or discard
+        // would write again.
+        if (leaving) return
         leaving = true
+        // A finished or discarded workout's running holds go with it.
+        lastActive[0]?.let { w -> Stopwatches.forget(w.entries.flatMap { e -> e.sets.map { it.id } }) }
         // The session's scope, not this screen's: the write must finish after the screen is gone.
         session.scope.launch { commit() }
         nav.pop()
     }
+    // Holds of sets removed here or on another device, or of a workout that ended elsewhere, are dropped.
+    ForgetRemovedHolds(remember(workout) { workout?.entries?.flatMap { e -> e.sets.map { it.id } }.orEmpty().toSet() })
 
     if (workout == null) {
         Column(Modifier.fillMaxSize()) {
@@ -254,15 +261,18 @@ fun SessionScreen(workoutId: String) {
     var finishPrompt by remember { mutableStateOf(false) }
     var discardPrompt by remember { mutableStateOf(false) }
 
-    fun save(entries: List<WorkoutEntry>) { scope.launch { repo.updateWorkout(workouts[workoutId] ?: workout, entries) } }
+    // The workout [entries] was made from, read now with them: by the time the save runs, a sync may
+    // have changed the store, and the save replays the edit onto that (see Repository.saveWorkout).
+    fun save(entries: List<WorkoutEntry>) {
+        val basis = workouts[workoutId] ?: workout
+        scope.launch { repo.updateWorkout(basis, entries) }
+    }
     fun latest() = (workouts[workoutId] ?: workout).entries
     fun replaceSet(entry: WorkoutEntry, set: SetEntry) = latest().map { e -> if (e.id == entry.id) e.copy(sets = e.sets.map { if (it.id == set.id) set else it }) else e }
 
     val routine = workout.routineId?.let { routines[it] }
     val library = remember(exercises) { exercises.values.filter { !it.deleted } }
-    val lastLabels = remember(workouts) {
-        workout.entries.associate { e -> e.exerciseId to (repo.lastEntryFor(e.exerciseId)?.let { lastTopSetLabel(it.sets, e.isTimed) }) }.filterValues { it != null }.mapValues { it.value!! }
-    }
+    val lastLabels = remember(workouts) { repo.lastTopSetLabels(workout.entries.map { it.exerciseId to it.isTimed }) }
 
     val actions = EntryActions(
         onSet = { entry, set -> save(replaceSet(entry, set)) },
@@ -275,8 +285,7 @@ fun SessionScreen(workoutId: String) {
         },
         onEditSet = { entry, set -> editTarget = entry to set },
         onAddSet = { entry ->
-            val last = entry.sets.lastOrNull()
-            val set = last?.copy(id = newId(), done = false, tag = null, updatedAt = null) ?: SetEntry(id = newId(), unit = prefs.unit, reps = if (entry.isTimed) 0 else 8, seconds = if (entry.isTimed) 30 else null)
+            val set = nextSet(entry, prefs.unit)
             save(latest().map { if (it.id == entry.id) it.copy(sets = it.sets + set) else it })
         },
         onMenu = { menuEntry = it },
@@ -286,6 +295,7 @@ fun SessionScreen(workoutId: String) {
     val totalSets = workout.entries.sumOf { it.sets.size }
     val doneSets = workout.entries.sumOf { e -> e.sets.count { it.done } }
     val doneEntries = workout.entries.count { it.isComplete() }
+    val unlogged = workout.entries.filterNot { it.isSkipped }.sumOf { e -> e.sets.count { !it.done } }
     val partner = partnerSnap.partner
     val partnerWorkout = partnerSnap.activeWorkout
 
@@ -310,7 +320,7 @@ fun SessionScreen(workoutId: String) {
                 )
             },
             heading = {
-                Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp).tappable(highlight = false) { renameWorkout = true }) {
+                Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp).tappable(highlight = false, onClickLabel = "Rename workout") { renameWorkout = true }) {
                     ScreenTitle(workout.routineName)
                     Mute("$doneSets of $totalSets sets · $doneEntries of ${plural(workout.entries.size, "exercise")}", size = T.Body)
                 }
@@ -324,8 +334,8 @@ fun SessionScreen(workoutId: String) {
                         Mute("Ready to finish? Tap below to record your workout.", Modifier.padding(top = 4.dp), size = T.Label, align = TextAlign.Center)
                         Spacer(Modifier.height(16.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Stat(formatVolume(animatedNumber(volumeKg(workout))), "volume", Modifier.weight(1f))
-                            Stat("${animatedNumber(doneSets.toDouble()).roundToInt()}", "sets", Modifier.weight(1f))
+                            AnimatedNumber(volumeKg(workout)) { Stat(formatVolume(it), "volume", Modifier.weight(1f)) }
+                            AnimatedNumber(doneSets.toDouble()) { Stat("${it.roundToInt()}", "sets", Modifier.weight(1f)) }
                             ElapsedMinutesStat(workout.startedAt, Modifier.weight(1f))
                         }
                         Spacer(Modifier.height(16.dp))
@@ -350,7 +360,6 @@ fun SessionScreen(workoutId: String) {
             }
             Box(
                 Modifier.weight(1f).height(58.dp).tappable {
-                    val unlogged = workout.entries.filterNot { it.isSkipped }.sumOf { e -> e.sets.count { !it.done } }
                     if (unlogged > 0) { haptic(Haptic.Tap); finishPrompt = true }
                     else { haptic(Haptic.WorkoutDone); leave { repo.finishWorkout(workouts[workoutId] ?: workout) } }
                 }.accentGel(RoundedCornerShape(29.dp)),
@@ -384,12 +393,23 @@ fun SessionScreen(workoutId: String) {
         entry = renameEntry,
         exercises = library,
         canUpdateRoutine = routine != null,
+        ownerId = session.user.id,
         onSave = { name, link, updateRoutine, updateLibrary ->
             val e = renameEntry ?: return@RenameExerciseSheet
             scope.launch {
-                val updated = if (link != null) e.copy(exerciseId = link.id, name = link.name, timed = link.timed) else e.copy(name = name)
-                repo.updateWorkout(workouts[workoutId] ?: workout, latest().map { if (it.id == e.id) updated else it })
-                if (updateLibrary && link == null) exercises[e.exerciseId]?.let { repo.saveExercise(it.id, name, it.timed) }
+                // From the entry as it is now, not as the sheet opened: a partner may have logged a set since.
+                val entries = latest().map { cur ->
+                    when {
+                        cur.id != e.id -> cur
+                        // Relinked to a lift tracked the other way (time or reps), its sets change shape too.
+                        link != null -> cur.copy(exerciseId = link.id, name = link.name, timed = link.timed, sets = reshapedSets(cur, link.isTimed))
+                        else -> cur.copy(name = name)
+                    }
+                }
+                val updated = entries.firstOrNull { it.id == e.id } ?: return@launch
+                repo.updateWorkout(workouts[workoutId] ?: workout, entries)
+                // Only your own exercise: the library here also holds your partner's.
+                if (updateLibrary && link == null) exercises[e.exerciseId]?.takeIf { it.owner == session.user.id }?.let { repo.saveExercise(it.id, name, it.timed) }
                 if (updateRoutine && routine != null) {
                     repo.saveRoutine(routine.id, routine.name, routine.items.map { item ->
                         if (item.exerciseId == e.exerciseId) item.copy(exerciseId = updated.exerciseId, name = updated.name) else item
@@ -399,11 +419,13 @@ fun SessionScreen(workoutId: String) {
         },
         onDismiss = { renameEntry = null },
     )
+    val deleting = rememberLast(deleteEntry)
     DeleteExerciseSheet(
         entry = deleteEntry,
         routineName = routine?.name,
-        onDelete = { fromRoutine ->
-            val e = deleteEntry ?: return@DeleteExerciseSheet
+        routineKeepsOthers = routine?.items?.any { it.exerciseId != deleting?.exerciseId } == true,
+        onDiscardWorkout = if (workout.entries.size <= 1) ({ leave { repo.deleteWorkout(workout.id) } }) else null,
+        onDelete = { e, fromRoutine ->
             scope.launch {
                 repo.updateWorkout(workouts[workoutId] ?: workout, latest().filterNot { it.id == e.id })
                 if (fromRoutine && routine != null) repo.saveRoutine(routine.id, routine.name, routine.items.filterNot { it.exerciseId == e.exerciseId })
@@ -414,8 +436,7 @@ fun SessionScreen(workoutId: String) {
     // Built only while the sheet is open (not on every set tap behind it), and kept as it closes.
     val addData = if (addOpen) {
         remember(workouts, library) {
-            recentExercises(workouts.values.toList(), library, session.user.id) to
-                library.associate { ex -> ex.id to repo.lastEntryFor(ex.id)?.let { lastTopSetLabel(it.sets, ex.isTimed) } }.filterValues { it != null }.mapValues { it.value!! }
+            recentExercises(workouts.values.toList(), library, session.user.id) to session.lastTopSetLabels(library)
         }
     } else {
         null
@@ -456,7 +477,6 @@ fun SessionScreen(workoutId: String) {
         },
         onDismiss = { renameWorkout = false },
     )
-    val unlogged = workout.entries.filterNot { it.isSkipped }.sumOf { e -> e.sets.count { !it.done } }
     ActionSheet(
         open = finishPrompt,
         title = "${plural(unlogged, "set")} ${if (unlogged == 1) "isn't" else "aren't"} logged",
@@ -523,8 +543,11 @@ fun ElapsedTxt(startedAt: String, size: androidx.compose.ui.unit.TextUnit, weigh
 private fun ElapsedMinutesStat(startedAt: String, modifier: Modifier) {
     val now = rememberNow()
     val start = remember(startedAt) { parseTime(startedAt) }
-    Stat(elapsedLabel(start, now).substringBeforeLast(':'), "minutes", modifier)
+    Stat("${elapsedMinutes(start, now)}", "minutes", modifier)
 }
+
+/** Whole minutes since [start], so an hour and four reads 64, not the "1:04" of the clock; never negative. */
+internal fun elapsedMinutes(start: Long, now: Long): Long = ((now - start) / 60_000).coerceAtLeast(0)
 
 @Composable
 private fun Stat(value: String, label: String, modifier: Modifier) {
@@ -534,9 +557,9 @@ private fun Stat(value: String, label: String, modifier: Modifier) {
     }
 }
 
-/** Exercises from the last two weeks of your workouts, newest first. */
+/** Up to six exercises from the last week of your workouts, newest first. */
 fun recentExercises(workouts: List<Workout>, library: List<Exercise>, userId: String): List<Exercise> {
-    val cutoff = dev.southstar21.volum.util.nowMillis() - 7 * 86_400_000L
+    val cutoff = nowMillis() - 7 * 86_400_000L
     val ids = workouts.filter { it.owner == userId && !it.deleted && parseTime(it.startedAt) > cutoff }
         .sortedByDescending { it.startedAt }
         .flatMap { w -> w.entries.map { it.exerciseId } }

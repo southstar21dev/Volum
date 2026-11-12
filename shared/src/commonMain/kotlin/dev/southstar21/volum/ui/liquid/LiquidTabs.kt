@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -34,9 +35,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -64,9 +67,10 @@ import com.kyant.shapes.Capsule
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 import kotlin.math.sign
+import dev.southstar21.volum.ui.theme.LocalReduceMotion
 import dev.southstar21.volum.ui.theme.tappable
 
 /**
@@ -75,7 +79,8 @@ import dev.southstar21.volum.ui.theme.tappable
  * accent colour) with a little chromatic aberration, swells while held and squashes with speed.
  *
  * [onSelect] fires once the drop has nearly arrived, so the page switch doesn't make the drop
- * stutter on its way there.
+ * stutter on its way there. If the caller doesn't take the selection, the drop returns to
+ * [selectedIndex]. With reduced motion the drop moves without swelling or stretching.
  *
  * @param frosted no live refraction available: the pane is a plain frosted fill.
  * @param item one item's content; [tinted] is the accent copy the drop shows.
@@ -101,8 +106,10 @@ fun LiquidTabs(
     onCross: () -> Unit = {},
     item: @Composable ColumnScope.(index: Int, tinted: Boolean) -> Unit,
 ) {
+    if (count <= 0) return
+    val reduce = LocalReduceMotion.current
     if (nested) {
-        PlainTabs(count, selectedIndex, onSelect, container, selection, modifier, height, surface, onCross, item)
+        PlainTabs(reduce, count, selectedIndex, onSelect, container, selection, modifier, height, surface, onCross, item)
         return
     }
     val selectedNow by rememberUpdatedState(selectedIndex)
@@ -122,36 +129,33 @@ fun LiquidTabs(
         val inset = with(density) { 8.dp.toPx() }
         val itemWidthState = remember(count, inset) { derivedStateOf { ((widthPx - inset) / count).coerceAtLeast(1f) } }
         val itemWidth by itemWidthState
-        val offsetAnimation = remember { Animatable(0f) }
-        val panelOffset by remember(density) {
-            derivedStateOf {
-                val fraction = (offsetAnimation.value / widthPx.coerceAtLeast(1f)).fastCoerceIn(-1f, 1f)
-                with(density) { 4.dp.toPx() * fraction.sign * EaseOut.transform(abs(fraction)) }
-            }
-        }
         val scope = rememberCoroutineScope()
         // One state for the tabs' lifetime: taps and drags write it, the caller follows it.
         var currentIndex by remember { mutableIntStateOf(selectedIndex) }
-        val drag = remember(scope, count) {
+        val drag = remember(scope, count, reduce) {
             DampedDragAnimation(
                 animationScope = scope,
                 initialValue = selectedIndex.toFloat(),
                 valueRange = 0f..(count - 1).toFloat(),
                 visibilityThreshold = 0.001f,
                 initialScale = 1f,
-                pressedScale = 78f / 56f,
-                onDragStarted = {},
+                pressedScale = if (reduce) 1f else 78f / 56f,
+                reduceMotion = reduce,
                 onDragStopped = {
                     val target = targetValue.fastRoundToInt().fastCoerceIn(0, count - 1)
                     currentIndex = target
                     animateToValue(target.toFloat())
-                    scope.launch { offsetAnimation.animateTo(0f, spring(1f, 300f, 0.5f)) }
                 },
                 onDrag = { _, amount ->
                     updateValue((targetValue + amount.x / itemWidth).fastCoerceIn(0f, (count - 1).toFloat()))
-                    scope.launch { offsetAnimation.snapTo(offsetAnimation.value + amount.x) }
                 },
             )
+        }
+        val panelOffset by remember(density, drag) {
+            derivedStateOf {
+                val fraction = (drag.offset / widthPx.coerceAtLeast(1f)).fastCoerceIn(-1f, 1f)
+                with(density) { 4.dp.toPx() * fraction.sign * EaseOut.transform(abs(fraction)) }
+            }
         }
         // Follow selection changes that didn't come from the tabs (back, swipes).
         LaunchedEffect(selectedIndex) {
@@ -169,7 +173,14 @@ fun LiquidTabs(
             snapshotFlow { currentIndex }.drop(1).collectLatest { index ->
                 drag.animateToValue(index.toFloat())
                 snapshotFlow { abs(drag.value - index) < 0.2f }.first { it }
-                if (index != selectedNow) onSelectNow(index)
+                if (index != selectedNow) {
+                    onSelectNow(index)
+                    // A caller that refuses the item (or never gets to it) leaves the drop where the
+                    // caller's selection is, not on the item it was dropped on. Waits a little, for a
+                    // selection that lands asynchronously.
+                    val taken = withTimeoutOrNull(SelectionGraceMillis) { snapshotFlow { selectedNow }.first { it == index } }
+                    if (taken == null) currentIndex = selectedNow
+                }
             }
         }
 
@@ -184,7 +195,7 @@ fun LiquidTabs(
                 Column(
                     Modifier
                         .clip(Capsule())
-                        .tappable(role = Role.Tab, highlight = false) { currentIndex = index }
+                        .tappable(role = Role.Tab, highlight = false, debounce = false) { currentIndex = index }
                         .semantics { selected = index == selectedIndex }
                         .fillMaxHeight()
                         .weight(1f)
@@ -199,6 +210,7 @@ fun LiquidTabs(
         items(
             tinted = false,
             rowModifier = Modifier
+                .selectableGroup()
                 .graphicsLayer { translationX = panelOffset }
                 .drawBackdrop(
                     backdrop = backdrop,
@@ -212,7 +224,7 @@ fun LiquidTabs(
                     // A faint rim: the system bar's edge barely catches the light.
                     highlight = { Highlight.Default.copy(alpha = 0.3f) },
                     layerBlock = {
-                        val s = paneSwell(16.dp.toPx(), size.width, drag.pressProgress)
+                        val s = paneSwell(if (reduce) 0f else 16.dp.toPx(), size.width, drag.pressProgress)
                         scaleX = s; scaleY = s
                     },
                     shadow = { Shadow(radius = 24.dp, color = shadowColor) },
@@ -230,7 +242,7 @@ fun LiquidTabs(
         val held by remember(drag) { derivedStateOf { drag.pressProgress > 0f } }
         items(
             tinted = true,
-            scale = { lerp(1f, 1.2f, drag.pressProgress) },
+            scale = if (reduce) ({ 1f }) else ({ lerp(1f, 1.2f, drag.pressProgress) }),
             rowModifier = Modifier
                 .clearAndSetSemantics {}
                 .alpha(0f)
@@ -298,9 +310,11 @@ fun LiquidTabs(
                     layerBlock = {
                         scaleX = drag.scaleX
                         scaleY = drag.scaleY
-                        val v = drag.velocity / 10f
-                        scaleX /= 1f - (v * 0.75f).fastCoerceIn(-0.2f, 0.2f)
-                        scaleY *= 1f - (v * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+                        if (!reduce) {
+                            val v = drag.velocity / 10f
+                            scaleX /= 1f - (v * 0.75f).fastCoerceIn(-0.2f, 0.2f)
+                            scaleY *= 1f - (v * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+                        }
                     },
                     // Nothing of its own: the pill's tint is drawn in the copy beneath it, at rest and
                     // held alike, so pressing never changes its colour.
@@ -320,6 +334,9 @@ fun LiquidTabs(
 private fun paneSwell(grow: Float, width: Float, progress: Float): Float =
     if (width <= 0f) 1f else lerp(1f, 1f + grow / width, progress)
 
+/** How long a tapped item waits for the caller to select it before the drop returns to the selection. */
+private const val SelectionGraceMillis = 300L
+
 /**
  * [LiquidTabs] on other glass (a sheet, a card). Layered liquid glass inside another glass surface
  * rendered only in part there (a blank pane, or a pill with no label), so this draws the same look
@@ -328,6 +345,7 @@ private fun paneSwell(grow: Float, width: Float, progress: Float): Float =
  */
 @Composable
 private fun PlainTabs(
+    reduce: Boolean,
     count: Int,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
@@ -340,20 +358,25 @@ private fun PlainTabs(
     item: @Composable ColumnScope.(index: Int, tinted: Boolean) -> Unit,
 ) {
     val position = remember { Animatable(selectedIndex.toFloat()) }
-    LaunchedEffect(selectedIndex) { position.animateTo(selectedIndex.toFloat(), spring(dampingRatio = 0.8f, stiffness = 500f)) }
+    LaunchedEffect(selectedIndex, reduce) {
+        if (reduce) position.snapTo(selectedIndex.toFloat())
+        else position.animateTo(selectedIndex.toFloat(), spring(dampingRatio = 0.8f, stiffness = 500f))
+    }
     val onCrossNow by rememberUpdatedState(onCross)
     LaunchedEffect(Unit) { snapshotFlow { position.value.fastRoundToInt() }.drop(1).collect { onCrossNow() } }
+    // Only the item under the pill matters to the labels: rounded, so the slide recomposes them once
+    // per item crossed, not on every frame.
+    val shown by remember { derivedStateOf { position.value.fastRoundToInt() } }
     var widthPx by remember { mutableFloatStateOf(0f) }
     val pane = Capsule()
     Box(
         modifier
             .height(height)
             .onSizeChanged { widthPx = it.width.toFloat() }
-            .drawBehind {
-                if (size.width <= 0f || size.height <= 0f) return@drawBehind
-                val outline = pane.createOutline(size, layoutDirection, this)
-                val path = androidx.compose.ui.graphics.Path().apply { addOutline(outline) }
-                clipPath(path) { if (surface != null) surface(pane) else drawRect(container) }
+            .drawWithCache {
+                if (size.width <= 0f || size.height <= 0f) return@drawWithCache onDrawBehind {}
+                val path = Path().apply { addOutline(pane.createOutline(size, layoutDirection, this@drawWithCache)) }
+                onDrawBehind { clipPath(path) { if (surface != null) surface(pane) else drawRect(container) } }
             }
             .padding(4.dp),
         contentAlignment = Alignment.CenterStart,
@@ -372,18 +395,18 @@ private fun PlainTabs(
                     drawRoundRect(selection, cornerRadius = r)
                 },
         )
-        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxSize().selectableGroup(), verticalAlignment = Alignment.CenterVertically) {
             repeat(count) { index ->
                 Column(
                     Modifier
                         .clip(Capsule())
-                        .tappable(role = Role.Tab, highlight = false) { if (index != selectedIndex) onSelect(index) }
+                        .tappable(role = Role.Tab, highlight = false, debounce = false) { if (index != selectedIndex) onSelect(index) }
                         .semantics { selected = index == selectedIndex }
                         .fillMaxHeight()
                         .weight(1f),
                     verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                ) { item(index, position.value.fastRoundToInt() == index) }
+                ) { item(index, shown == index) }
             }
         }
     }

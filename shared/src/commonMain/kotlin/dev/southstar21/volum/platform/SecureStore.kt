@@ -2,8 +2,9 @@ package dev.southstar21.volum.platform
 
 /**
  * Small secrets, such as the sign-in token. iOS keeps them in the Keychain, on this device only, so
- * they never go into iCloud or computer backups. Android keeps them in an app-private file
- * (`<key>.json` in filesDir), which is already excluded from backups (allowBackup="false").
+ * they never go into iCloud or computer backups. Android encrypts them with an Android Keystore key
+ * into an app-private file (`secure/<key>.bin` in filesDir), which the backup and device-transfer
+ * rules also leave out.
  */
 expect object SecureStore {
     fun read(key: String): String?

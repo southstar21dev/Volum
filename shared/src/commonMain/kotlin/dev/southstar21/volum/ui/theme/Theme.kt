@@ -21,8 +21,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
 import androidx.compose.ui.node.DelegatableNode
 import androidx.compose.ui.node.DrawModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.currentValueOf
 import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
@@ -43,6 +46,7 @@ import dev.southstar21.volum.resources.Res
 import dev.southstar21.volum.resources.jost
 import dev.southstar21.volum.resources.plus_jakarta_sans
 import org.jetbrains.compose.resources.Font
+import kotlin.time.TimeSource
 
 /** The locked brand palette: sage & forest with a butter glow. Volum is light-only. */
 @Immutable
@@ -60,8 +64,6 @@ data class VolumColors(
     val danger: Color, val dangerSoft: Color,
     // Neumorphism
     val neuBg: Color, val neuDark: Color, val neuLight: Color,
-    // Steel handle grey, charts
-    val steel: Color,
     // Nested liquid glass (a control on a card or sheet), the accent gel's drop, the current set's glow
     val milkTop: Color, val milkBottom: Color, val accentShadow: Color, val currentGlow: Color,
     // The partner's warm avatar
@@ -80,7 +82,6 @@ val LightColors = VolumColors(
     accent = Color(0xFF1F4D33), onAccent = Color.White, accentTop = Color(0xFF3E7354), accentBottom = Color(0xFF1F4D33), soft = Color(0x1F1F4D33),
     danger = Color(0xFFB3261E), dangerSoft = Color(0x1AB3261E),
     neuBg = Color(0xFFE2E9DA), neuDark = Color(0x7378966E), neuLight = Color(0xF2FFFFFF),
-    steel = Color(0xFF6A746E),
     milkTop = Color(0xE6FFFFFF), milkBottom = Color(0x99FFFFFF), accentShadow = Color(0x801F4D33), currentGlow = Color(0x661F4D33),
     warmTop = Color(0xFFF7E6A6), warmBottom = Color(0xFFBFD6B5), warmInk = Color(0xFF1C3324),
     iconShadow = Color(0x551E3C28),
@@ -199,28 +200,71 @@ val Medium = FontWeight.Medium
  * A click without ripple, with a squishy press (sinks while held, springs back with a little overshoot),
  * and an optional haptic tick. The sink is about the same few dp whatever the size, so big cards dip
  * gently and small buttons squish more. Not composed: the press lives in a [SquishIndication] node.
+ *
+ * [debounce] drops a second click that lands within [ClickDebounceMillis] of the last one on the same
+ * element, so a double tap can't save, push or append twice while the screen or sheet is still on its
+ * way out. Pass false for controls meant to be tapped quickly in a row (steppers, tabs, toggles).
+ * Long presses are never dropped.
  */
 fun Modifier.tappable(
-    @Suppress("UNUSED_PARAMETER") shape: androidx.compose.ui.graphics.Shape? = null,
     enabled: Boolean = true,
     role: Role? = Role.Button,
     highlight: Boolean = true,
     haptic: Boolean = false,
     onClickLabel: String? = null,
     onLongClick: (() -> Unit)? = null,
+    debounce: Boolean = true,
     onClick: () -> Unit,
-): Modifier = this
-    .then(if (enabled) Modifier else Modifier.alpha(0.45f))
-    .combinedClickable(
-        interactionSource = null,
-        indication = if (highlight && enabled) SquishIndication else null,
-        enabled = enabled,
-        onClickLabel = onClickLabel,
-        role = role,
-        onLongClick = onLongClick,
-        hapticFeedbackEnabled = false,
-        onClick = if (haptic) { { hapticTick(); onClick() } } else onClick,
-    )
+): Modifier {
+    val click = if (haptic) { { hapticTick(); onClick() } } else onClick
+    val gate = if (debounce) ClickGate() else null
+    return this
+        .then(if (enabled) Modifier else Modifier.alpha(0.45f))
+        .then(if (gate != null) ClickGateElement(gate) else Modifier)
+        .combinedClickable(
+            interactionSource = null,
+            indication = if (highlight && enabled) SquishIndication else null,
+            enabled = enabled,
+            onClickLabel = onClickLabel,
+            role = role,
+            onLongClick = onLongClick,
+            hapticFeedbackEnabled = false,
+            onClick = if (gate != null) { { if (gate.pass()) click() } } else click,
+        )
+}
+
+/** Outlasts a page transition ([Durations.Page]), the longest a tapped screen stays tappable on its way out. */
+private const val ClickDebounceMillis = 350L
+
+/**
+ * The click lambda is rebuilt on every recomposition, and the first click usually causes one, so the
+ * time of the last click lives in a node, which outlives recompositions; each new lambda's gate is
+ * pointed at it when the modifier is updated.
+ */
+private class ClickGate {
+    var node: ClickGateNode? = null
+
+    fun pass(): Boolean {
+        val node = node ?: return true
+        val last = node.last
+        if (last != null && last.elapsedNow().inWholeMilliseconds < ClickDebounceMillis) return false
+        node.last = TimeSource.Monotonic.markNow()
+        return true
+    }
+}
+
+private class ClickGateNode : Modifier.Node() {
+    var last: TimeSource.Monotonic.ValueTimeMark? = null
+}
+
+private class ClickGateElement(private val gate: ClickGate) : ModifierNodeElement<ClickGateNode>() {
+    override fun create(): ClickGateNode = ClickGateNode().also { gate.node = it }
+    override fun update(node: ClickGateNode) {
+        gate.node = node
+    }
+    override fun equals(other: Any?): Boolean = other === this
+    override fun hashCode(): Int = gate.hashCode()
+}
 
 /** The press squish as an indication: one node per clickable, driven by its own interactions. */
 private object SquishIndication : IndicationNodeFactory {
@@ -229,18 +273,32 @@ private object SquishIndication : IndicationNodeFactory {
     override fun hashCode(): Int = 0x5157
 }
 
-private class SquishNode(private val source: InteractionSource) : Modifier.Node(), DrawModifierNode {
+private class SquishNode(private val source: InteractionSource) : Modifier.Node(), DrawModifierNode, CompositionLocalConsumerModifierNode {
     private val press = Animatable(0f)
 
     override fun onAttach() {
         coroutineScope.launch {
             source.interactions.collectLatest { interaction ->
+                // With reduced motion the press shows as a still sink, without the spring or overshoot.
+                val reduce = currentValueOf(LocalReduceMotion)
                 when (interaction) {
-                    is PressInteraction.Press -> press.animateTo(1f, Springs.press()) { invalidateDraw() }
+                    is PressInteraction.Press -> {
+                        if (reduce) {
+                            press.snapTo(1f)
+                            invalidateDraw()
+                        } else {
+                            press.animateTo(1f, Springs.press()) { invalidateDraw() }
+                        }
+                    }
                     is PressInteraction.Release, is PressInteraction.Cancel -> {
-                        // A quick tap may release before the sink shows: dip first so every tap reads.
-                        if (press.value < 0.7f) press.animateTo(1f, tween(Durations.Instant)) { invalidateDraw() }
-                        press.animateTo(0f, Springs.release()) { invalidateDraw() }
+                        if (reduce) {
+                            press.snapTo(0f)
+                            invalidateDraw()
+                        } else {
+                            // A quick tap may release before the sink shows: dip first so every tap reads.
+                            if (press.value < 0.7f) press.animateTo(1f, tween(Durations.Instant)) { invalidateDraw() }
+                            press.animateTo(0f, Springs.release()) { invalidateDraw() }
+                        }
                     }
                 }
             }

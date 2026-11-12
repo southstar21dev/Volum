@@ -25,6 +25,8 @@ import platform.Foundation.dataUsingEncoding
 import platform.Security.SecItemAdd
 import platform.Security.SecItemCopyMatching
 import platform.Security.SecItemDelete
+import platform.Security.SecItemUpdate
+import platform.Security.errSecItemNotFound
 import platform.Security.errSecSuccess
 import platform.Security.kSecAttrAccessible
 import platform.Security.kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -54,16 +56,19 @@ actual object SecureStore {
     actual fun write(key: String, value: String): Boolean {
         @Suppress("CAST_NEVER_SUCCEEDS")
         val data = (value as NSString).dataUsingEncoding(NSUTF8StringEncoding) ?: return false
-        delete(key)
         val dataRef = CFBridgingRetain(data)
         try {
-            return withQuery(
-                key,
+            // Replaced in place, so a failed write leaves the previous value rather than nothing.
+            // Readable after the first unlock (so a background refresh works), never restored onto
+            // another device from a backup.
+            val attributes = arrayOf<Pair<CFTypeRef?, CFTypeRef?>>(
                 kSecValueData to dataRef,
-                // Readable after the first unlock (so a background refresh works), never restored
-                // onto another device from a backup.
                 kSecAttrAccessible to kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-            ) { query -> SecItemAdd(query, null) == errSecSuccess }
+            )
+            val updated = withQuery(key) { query -> withDictionary(*attributes) { changes -> SecItemUpdate(query, changes) } }
+            if (updated == errSecSuccess) return true
+            if (updated != errSecItemNotFound) return false
+            return withQuery(key, *attributes) { query -> SecItemAdd(query, null) == errSecSuccess }
         } finally {
             CFRelease(dataRef)
         }
@@ -74,19 +79,29 @@ actual object SecureStore {
     }
 
     private fun <T> withQuery(key: String, vararg extra: Pair<CFTypeRef?, CFTypeRef?>, block: (CFMutableDictionaryRef?) -> T): T {
-        val query = CFDictionaryCreateMutable(null, 0, kCFTypeDictionaryKeyCallBacks.ptr, kCFTypeDictionaryValueCallBacks.ptr)
         val service = CFBridgingRetain(SERVICE)
         val account = CFBridgingRetain(key)
         try {
-            CFDictionaryAddValue(query, kSecClass, kSecClassGenericPassword)
-            CFDictionaryAddValue(query, kSecAttrService, service)
-            CFDictionaryAddValue(query, kSecAttrAccount, account)
-            for ((name, value) in extra) CFDictionaryAddValue(query, name, value)
-            return block(query)
+            return withDictionary(
+                kSecClass to kSecClassGenericPassword,
+                kSecAttrService to service,
+                kSecAttrAccount to account,
+                *extra,
+                block = block,
+            )
         } finally {
             CFRelease(service)
             CFRelease(account)
-            CFRelease(query)
+        }
+    }
+
+    private fun <T> withDictionary(vararg entries: Pair<CFTypeRef?, CFTypeRef?>, block: (CFMutableDictionaryRef?) -> T): T {
+        val dictionary = CFDictionaryCreateMutable(null, 0, kCFTypeDictionaryKeyCallBacks.ptr, kCFTypeDictionaryValueCallBacks.ptr)
+        try {
+            for ((name, value) in entries) CFDictionaryAddValue(dictionary, name, value)
+            return block(dictionary)
+        } finally {
+            CFRelease(dictionary)
         }
     }
 }

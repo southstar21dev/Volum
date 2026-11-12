@@ -41,6 +41,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,6 +55,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -105,7 +108,7 @@ import dev.southstar21.volum.ui.theme.Icons
 import dev.southstar21.volum.ui.theme.Semibold
 import dev.southstar21.volum.ui.theme.Volum
 import dev.southstar21.volum.ui.theme.tappable
-import dev.southstar21.volum.ui.theme.animatedNumber
+import dev.southstar21.volum.ui.theme.AnimatedNumber
 import dev.southstar21.volum.ui.theme.growUp
 import dev.southstar21.volum.ui.theme.popIn
 import dev.southstar21.volum.ui.theme.riseIn
@@ -161,21 +164,39 @@ fun TodayScreen() {
         buildDashboard(workouts.values.toList(), user.id, exercises.mapValues { it.value.name }, prefs.unit, at)
     }
 
-    var menuFor by remember { mutableStateOf<Routine?>(null) }
-    var startPrompt by remember { mutableStateOf<Routine?>(null) }
-    var deleteFor by remember { mutableStateOf<Routine?>(null) }
-    var activeMenu by remember { mutableStateOf(false) }
+    // Open sheets are kept by id, so they survive the activity being recreated.
+    var menuForId by rememberSaveable { mutableStateOf<String?>(null) }
+    var startPromptId by rememberSaveable { mutableStateOf<String?>(null) }
+    var deleteForId by rememberSaveable { mutableStateOf<String?>(null) }
+    var activeMenu by rememberSaveable { mutableStateOf(false) }
+    // The workouts a discard prompt names, fixed when it was asked for.
+    var discardIds by rememberSaveable { mutableStateOf<List<String>?>(null) }
+    fun routineFor(id: String?): Routine? = id?.let { routines[it] }?.takeIf { !it.deleted }
+    val menuFor = routineFor(menuForId)
+    val startPrompt = routineFor(startPromptId)
+    val deleteFor = routineFor(deleteForId)
 
-    fun start(routine: Routine) {
+    // A second tap while a workout is being created would create a second one.
+    var launching by remember { mutableStateOf(false) }
+    fun start(routine: Routine, discard: List<String> = emptyList()) {
+        if (launching) return
+        launching = true
         scope.launch {
-            val w = session.repository.startSession(routine, prefs.unit)
-            nav.push(Route.Session(w.id))
+            var opened = false
+            try {
+                session.repository.discardUnfinished(discard)
+                val w = session.repository.startSession(routine, prefs.unit)
+                opened = nav.push(Route.Session(w.id))
+            } finally {
+                // Once the session is open this page is leaving; until then a failed start can be retried.
+                if (!opened) launching = false
+            }
         }
     }
     fun requestStart(routine: Routine) {
         when {
             ownActive != null && routine.id == ownActive.routineId -> nav.push(Route.Session(ownActive.id))
-            ownActive != null -> startPrompt = routine
+            ownActive != null -> startPromptId = routine.id
             else -> start(routine)
         }
     }
@@ -246,7 +267,7 @@ fun TodayScreen() {
                                 highlight = row == 0 && i == 0,
                                 active = ownActive?.routineId == routine.id,
                                 modifier = Modifier.weight(1f),
-                                onOpen = { menuFor = routine },
+                                onOpen = { menuForId = routine.id },
                                 onStart = { requestStart(routine) },
                             )
                         }
@@ -266,12 +287,12 @@ fun TodayScreen() {
         routine = menuRoutine,
         open = menuFor != null,
         active = isActiveRoutine,
-        onDismiss = { menuFor = null },
+        onDismiss = { menuForId = null },
         onStart = { menuRoutine?.let { requestStart(it) } },
         onEdit = { menuRoutine?.let { nav.push(Route.RoutineEditor(it.id)) } },
         onDuplicate = { menuRoutine?.let { r -> scope.launch { session.repository.duplicateRoutine(r) } } },
-        onDelete = { deleteFor = menuRoutine },
-        onDiscard = { ownActive?.let { w -> scope.launch { session.repository.deleteWorkout(w.id) } } },
+        onDelete = { deleteForId = menuRoutine?.id },
+        onDiscard = { ownActive?.let { w -> discardIds = listOf(w.id) } },
     )
     val deleting = rememberLast(deleteFor)
     ConfirmSheet(
@@ -279,8 +300,8 @@ fun TodayScreen() {
         title = "Delete ${deleting?.name ?: "routine"}?",
         message = "Your workout history stays.",
         confirm = "Delete routine",
-        onConfirm = { deleteFor?.let { r -> scope.launch { session.repository.deleteRoutine(r.id) } } },
-        onDismiss = { deleteFor = null },
+        onConfirm = { deleting?.let { r -> scope.launch { session.repository.deleteRoutine(r.id) } } },
+        onDismiss = { deleteForId = null },
     )
     val starting = rememberLast(startPrompt)
     ActionSheet(
@@ -289,16 +310,14 @@ fun TodayScreen() {
         subtitle = ownActive?.routineName,
         actions = listOfNotNull(
             ownActive?.let { w -> SheetAction("Resume ${w.routineName}", Icons.Play) { nav.push(Route.Session(w.id)) } },
+            // This sheet is itself the confirmation. Every unfinished workout goes, not just the one
+            // named above, so starting fresh leaves nothing behind; the label says so when there are several.
             starting?.let { r ->
-                SheetAction("Discard and start ${r.name}", Icons.Trash, destructive = true) {
-                    scope.launch {
-                        actives.forEach { session.repository.deleteWorkout(it.id) }
-                        start(r)
-                    }
-                }
+                val label = if (actives.size > 1) "Discard all ${actives.size} unfinished and start ${r.name}" else "Discard and start ${r.name}"
+                SheetAction(label, Icons.Trash, destructive = true) { start(r, discard = actives.map { it.id }) }
             },
         ),
-        onDismiss = { startPrompt = null },
+        onDismiss = { startPromptId = null },
     )
     ActionSheet(
         open = activeMenu,
@@ -306,11 +325,26 @@ fun TodayScreen() {
         actions = listOfNotNull(
             ownActive?.let { w -> SheetAction("Resume", Icons.Play) { nav.push(Route.Session(w.id)) } },
             if (actives.size > 1) SheetAction("Discard all ${actives.size} unfinished", Icons.Trash, destructive = true) {
-                scope.launch { actives.forEach { session.repository.deleteWorkout(it.id) } }
+                discardIds = actives.map { it.id }
             } else null,
-            ownActive?.let { w -> SheetAction("Discard this workout", Icons.Trash, destructive = true) { scope.launch { session.repository.deleteWorkout(w.id) } } },
+            ownActive?.let { w -> SheetAction("Discard this workout", Icons.Trash, destructive = true) { discardIds = listOf(w.id) } },
         ),
         onDismiss = { activeMenu = false },
+    )
+    // Every workout it names was finished or discarded elsewhere meanwhile: nothing left to ask about.
+    LaunchedEffect(discardIds, actives) {
+        if (discardIds?.none { id -> actives.any { it.id == id } } == true) discardIds = null
+    }
+    val discarding = rememberLast(discardIds)
+    val several = (discarding?.size ?: 0) > 1
+    ConfirmSheet(
+        open = discardIds != null,
+        title = if (several) "Discard ${discarding?.size} unfinished workouts?" else "Discard this workout?",
+        message = if (several) "Their sets won't be saved to your history." else "Its sets won't be saved to your history.",
+        confirm = if (several) "Discard all" else "Discard workout",
+        // Only those still unfinished: one may have been finished on another device while the prompt was up.
+        onConfirm = { discarding?.let { ids -> scope.launch { session.repository.discardUnfinished(ids) } } },
+        onDismiss = { discardIds = null },
     )
 }
 
@@ -397,7 +431,9 @@ private fun rich(text: String, base: Color, strong: Color): AnnotatedString = bu
 @Composable
 private fun LiveRow(title: String, subtitle: String, avatar: @Composable () -> Unit, onClick: () -> Unit, onMenu: (() -> Unit)? = null) {
     Row(
-        Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp).fillMaxWidth().tappable(onClick = onClick).glassCard(RoundedCornerShape(24.dp)).padding(10.dp),
+        // The menu button's 48 dp touch target overhangs its 38 dp circle by 5 dp, taken out of the padding.
+        Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp).fillMaxWidth().tappable(onClick = onClick).glassCard(RoundedCornerShape(24.dp))
+            .padding(start = 10.dp, end = if (onMenu != null) 5.dp else 10.dp, top = 5.dp, bottom = 5.dp).heightIn(min = 48.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -406,7 +442,7 @@ private fun LiveRow(title: String, subtitle: String, avatar: @Composable () -> U
             Txt(title, size = T.Body, weight = Bold, maxLines = 1)
             Mute(subtitle, size = T.Caption, maxLines = 1)
         }
-        if (onMenu != null) CircleButton(Icons.More, "Workout options", size = 38.dp, iconSize = 18.dp, onClick = onMenu)
+        if (onMenu != null) SmallCircleButton(Icons.More, "Workout options", iconSize = 18.dp, onClick = onMenu)
         // The whole row opens it: the chevron only says so.
         else GlassBadge(Icons.ChevronRight)
     }
@@ -454,10 +490,12 @@ private fun VolumeCard(weeks: List<Pair<kotlinx.datetime.LocalDate, Double>>, pr
                 Txt("Weekly volume", size = T.BodyLarge, weight = Bold)
                 Mute(listOfNotNull(if (prs > 0) "${plural(prs, "PR")} this week" else null, "${plural(monthWorkouts, "workout")} this month").joinToString(" · "), size = T.Caption)
             }
-            val text = formatVolume(animatedNumber(weeks.sumOf { it.second }))
-            Row(verticalAlignment = Alignment.Bottom) {
-                Txt(text.substringBeforeLast(' '), size = T.Heading, weight = ExtraBold, tabular = true)
-                Txt(" " + text.substringAfterLast(' '), Modifier.padding(bottom = 2.dp), size = T.Caption, color = c.mute, weight = Semibold)
+            AnimatedNumber(weeks.sumOf { it.second }) { v ->
+                val text = formatVolume(v)
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Txt(text.substringBeforeLast(' '), size = T.Heading, weight = ExtraBold, tabular = true)
+                    Txt(" " + text.substringAfterLast(' '), Modifier.padding(bottom = 2.dp), size = T.Caption, color = c.mute, weight = Semibold)
+                }
             }
         }
         Spacer(Modifier.height(40.dp))
@@ -518,13 +556,28 @@ fun Modifier.hatch(stripe: Color, period: androidx.compose.ui.unit.Dp = 6.dp, wi
 
 @Composable
 private fun RoutineCard(routine: Routine, subtitle: String, highlight: Boolean, active: Boolean, modifier: Modifier, onOpen: () -> Unit, onStart: () -> Unit) {
-    GlassCard(modifier, shape = RoundedCornerShape(24.dp), padding = androidx.compose.foundation.layout.PaddingValues(14.dp), onClick = onOpen) {
+    // The play button's 48 dp touch target overhangs its 38 dp circle by 5 dp, taken out of the padding.
+    GlassCard(modifier, shape = RoundedCornerShape(24.dp), padding = androidx.compose.foundation.layout.PaddingValues(start = 14.dp, end = 9.dp, top = 9.dp, bottom = 14.dp), onClick = onOpen) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Txt(routine.name, Modifier.weight(1f), size = T.Subhead, weight = ExtraBold, maxLines = 2)
-            CircleButton(Icons.Play, if (active) "Resume ${routine.name}" else "Start ${routine.name}", size = 38.dp, iconSize = 14.dp, accent = highlight || active, onClick = onStart)
+            SmallCircleButton(Icons.Play, if (active) "Resume ${routine.name}" else "Start ${routine.name}", iconSize = 14.dp, accent = highlight || active, onClick = onStart)
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(5.dp))
         Mute(if (active) "In progress" else subtitle, size = T.Caption, maxLines = 2)
+    }
+}
+
+/** A 38 dp glass circle inside a 48 dp touch target. */
+@Composable
+private fun SmallCircleButton(icon: ImageVector, contentDescription: String, iconSize: Dp, accent: Boolean = false, onClick: () -> Unit) {
+    val c = Volum.colors
+    Box(
+        Modifier.size(48.dp).tappable(haptic = accent, onClick = onClick).semantics { this.contentDescription = contentDescription },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.size(38.dp).then(if (accent) Modifier.accentGel(CircleShape) else Modifier.liquidGlass(CircleShape)), contentAlignment = Alignment.Center) {
+            Icon(icon, if (accent) c.onAccent else c.ink, size = iconSize)
+        }
     }
 }
 
@@ -569,7 +622,8 @@ fun RoutineMenuSheet(
                 Mute(plural(r.items.size, "exercise"), size = T.Label)
             }
         }
-        PrimaryButton(if (active) "Resume workout" else "Start workout") { onDismiss(); onStart() }
+        // The sheet stays tappable while it slides away: a second tap mustn't run its action again.
+        PrimaryButton(if (active) "Resume workout" else "Start workout") { if (open) { onDismiss(); onStart() } }
         Spacer(Modifier.height(12.dp))
         Column(Modifier.fillMaxWidth().glassCard(RoundedCornerShape(24.dp)).padding(vertical = 4.dp)) {
             val rows = if (active) listOf(
@@ -581,7 +635,7 @@ fun RoutineMenuSheet(
             )
             rows.forEachIndexed { i, a ->
                 if (i > 0) dev.southstar21.volum.ui.components.Divider(inset = 16.dp)
-                SheetActionRow(a, plainIcon = true) { onDismiss(); a.onClick() }
+                SheetActionRow(a, plainIcon = true) { if (open) { onDismiss(); a.onClick() } }
             }
         }
     }

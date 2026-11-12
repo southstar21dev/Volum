@@ -9,13 +9,25 @@ GitHub builds, signs and publishes every release. Local builds are for developme
 | `dev`, PRs | Shared tests, Android R8 build, iOS tests and device build | Nothing |
 | `master` | Same | Release, e.g. `v1.2.0` |
 
-CI skips changes that only touch Markdown or `docs/`, skips the iOS jobs for changes only under
-`androidApp/`, and doesn't run again for a PR from `dev`, since the push already tested that commit.
+CI skips changes that only touch Markdown or `docs/`, and skips the iOS jobs for changes only under
+`androidApp/`. A PR from `dev` into `master` gets its own full run, so the PR shows a real result
+for the merge rather than a skipped job. No checks are required to merge today. If some are made
+required later, note that a PR touching only Markdown or `docs/` starts no CI run at all, so its
+required checks would wait forever: add an always-running gate job first.
 
 CI caches the Gradle home (dependencies, build cache, configuration cache) and, for the iOS jobs,
 the Kotlin/Native toolchain in `~/.konan`. Pushes to `dev` and `master` save the caches; PRs only
 read them. The toolchain cache is keyed on the Kotlin version, so a Kotlin upgrade downloads it once
 more.
+
+Before anything is versioned, the release job runs the shared tests (Android host and iOS
+simulator), the same ones CI runs, on the pushed commit. If they fail, nothing is tagged or published.
+The Release run then shows red even for a push with nothing to release (only `chore:` commits, say),
+and the `altstore-source` job below is skipped for it; once the tests pass, rerun the job or run
+`gh workflow run release.yml --ref master` to republish the sources.
+
+CI and the release install a pinned XcodeGen (2.46.0) with `scripts/install-xcodegen.sh`, which checks
+the download's SHA-256. To upgrade it, change the version and the `xcodegen.zip` digest there.
 
 semantic-release reads the Conventional Commits since the last tag. If any warrant a release
 (`fix:`, `perf:`, `feat:`, breaking changes), it runs `scripts/build-release.sh`, which writes the

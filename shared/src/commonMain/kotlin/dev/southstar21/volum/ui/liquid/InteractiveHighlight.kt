@@ -5,6 +5,9 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.core.spring
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -22,8 +25,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Liquid Glass touch feedback: on press the material "illuminates from within", a soft glow that
- * starts under the fingertip and follows it, while [pressProgress] and [offset] drive a gel-like
- * swell and lean in the glass's graphics layer.
+ * starts under the fingertip and follows it.
  */
 class InteractiveHighlight(
     private val animationScope: CoroutineScope,
@@ -35,8 +37,11 @@ class InteractiveHighlight(
     private val positionAnimation = Animatable(Offset.Zero, Offset.VectorConverter, Offset.VisibilityThreshold)
     private var startPosition = Offset.Zero
 
-    val pressProgress: Float get() = pressAnimation.value
-    val offset: Offset get() = positionAnimation.value - startPosition
+    // While a finger is down the glow follows it directly: a move sets the position, no coroutine
+    // per pointer event. The spring only runs on release, back to where the press began.
+    private var following by mutableStateOf(false)
+    private var fingerPosition by mutableStateOf(Offset.Zero)
+    private var gesture = 0
 
     private val shader = if (isRuntimeShaderSupported()) {
         RuntimeShader(
@@ -62,7 +67,7 @@ half4 main(float2 coord) {
             if (shader != null) {
                 drawRect(Color.White.copy(0.08f * progress), blendMode = BlendMode.Plus)
                 shader.apply {
-                    val p = position(size, positionAnimation.value)
+                    val p = position(size, if (following) fingerPosition else positionAnimation.value)
                     setFloatUniform("size", size.width, size.height)
                     setColorUniform("color", Color.White.copy(0.15f * progress))
                     setFloatUniform("radius", size.minDimension * 1.5f)
@@ -81,21 +86,27 @@ half4 main(float2 coord) {
     val gestureModifier: Modifier = Modifier.pointerInput(animationScope) {
         inspectDragGestures(
             onDragStart = { down ->
+                gesture++
                 startPosition = down.position
-                animationScope.launch {
-                    launch { pressAnimation.animateTo(1f, pressSpec) }
-                    launch { positionAnimation.snapTo(startPosition) }
-                }
+                fingerPosition = down.position
+                following = true
+                animationScope.launch { pressAnimation.animateTo(1f, pressSpec) }
             },
             onDragEnd = { release() },
             onDragCancel = { release() },
-        ) { change, _ -> animationScope.launch { positionAnimation.snapTo(change.position) } }
+        ) { change, _ -> fingerPosition = change.position }
     }
 
     private fun release() {
+        val released = gesture
+        val from = fingerPosition
         animationScope.launch {
             launch { pressAnimation.animateTo(0f, pressSpec) }
-            launch { positionAnimation.animateTo(startPosition, positionSpec) }
+            positionAnimation.snapTo(from)
+            // Handed over to the spring only now, so no frame draws the glow anywhere in between;
+            // a press that began meanwhile keeps following its finger.
+            if (released == gesture) following = false
+            positionAnimation.animateTo(startPosition, positionSpec)
         }
     }
 }

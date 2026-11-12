@@ -101,6 +101,8 @@ import dev.southstar21.volum.util.convert
 import dev.southstar21.volum.util.formatWeightValue
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
+import androidx.compose.runtime.saveable.rememberSaveable
+import kotlin.coroutines.cancellation.CancellationException
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
@@ -132,8 +134,9 @@ fun AppIcon(size: androidx.compose.ui.unit.Dp) {
 fun AuthScreen() {
     val app = LocalApp.current
     val scope = rememberCoroutineScope()
-    var mode by remember { mutableIntStateOf(0) }
-    var email by remember { mutableStateOf("") }
+    var mode by rememberSaveable { mutableIntStateOf(0) }
+    var email by rememberSaveable { mutableStateOf("") }
+    // Passwords stay out of saved instance state, which the system can keep outside the app's process.
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -141,20 +144,23 @@ fun AuthScreen() {
     val c = Volum.colors
 
     fun submit() {
+        // The keyboard's Go action is not disabled while busy the way the button is.
+        if (busy) return
         error = null
         if (email.isBlank() || password.isBlank()) { error = "Enter your email and password."; return }
         if (mode == 1 && password.length < 8) { error = "Use at least 8 characters."; return }
         if (mode == 1 && password != confirm) { error = "Passwords don't match."; return }
+        val register = mode == 1
         busy = true
         scope.launch {
             try {
-                if (mode == 0) app.login(email, password) else app.register(email, password)
+                if (register) app.register(email, password) else app.login(email, password)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: PbException) {
-                error = when {
-                    e.status == 0 -> "You're offline. Connect to sign in."
-                    mode == 0 && e.status == 400 -> "Wrong email or password."
-                    else -> e.data?.values?.firstOrNull()?.let { (it as? kotlinx.serialization.json.JsonObject)?.get("message")?.toString()?.trim('"') } ?: e.message
-                }
+                error = authErrorMessage(e, register)
+            } catch (e: Exception) {
+                error = "Something went wrong. Try again."
             } finally {
                 busy = false
             }
@@ -222,22 +228,29 @@ fun OnboardingScreen() {
     val user by app.user.collectAsStateWithLifecycle()
     val prefs by app.prefs.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    var step by remember { mutableIntStateOf(0) }
-    var name by remember { mutableStateOf(user?.name.orEmpty()) }
-    var unit by remember { mutableStateOf(prefs.unit) }
+    var step by rememberSaveable { mutableIntStateOf(0) }
+    var name by rememberSaveable { mutableStateOf(user?.name.orEmpty()) }
+    // Saved by ordinal: a plain Int is saveable on every platform.
+    var unitIndex by rememberSaveable { mutableIntStateOf(prefs.unit.ordinal) }
+    val unit = WeightUnit.entries[unitIndex]
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val c = Volum.colors
 
     fun finish() {
+        if (busy) return
         busy = true
         error = null
         scope.launch {
             try {
                 if (name.trim() != user?.name) app.setDisplayName(name.trim())
                 app.updatePrefs { it.copy(unit = unit, onboardingDone = true) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: PbException) {
-                error = if (e.status == 0) "You're offline. Connect to save your name." else e.message
+                error = if (e.status == 0) "You're offline. Connect to save your name." else e.fieldMessage ?: "Couldn't save your name. Try again."
+            } catch (e: Exception) {
+                error = "Couldn't save your name. Try again."
             } finally {
                 busy = false
             }
@@ -305,8 +318,8 @@ fun OnboardingScreen() {
                         Mute("Pick the unit you type in. Every weight still shows both.", size = T.BodyLarge)
                         Spacer(Modifier.height(36.dp))
                         Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                            UnitTile(WeightUnit.Kg, "Kilograms", unit == WeightUnit.Kg, Modifier.weight(1f)) { unit = WeightUnit.Kg }
-                            UnitTile(WeightUnit.Lb, "Pounds", unit == WeightUnit.Lb, Modifier.weight(1f)) { unit = WeightUnit.Lb }
+                            UnitTile(WeightUnit.Kg, "Kilograms", unit == WeightUnit.Kg, Modifier.weight(1f)) { unitIndex = WeightUnit.Kg.ordinal }
+                            UnitTile(WeightUnit.Lb, "Pounds", unit == WeightUnit.Lb, Modifier.weight(1f)) { unitIndex = WeightUnit.Lb.ordinal }
                         }
                         Spacer(Modifier.height(30.dp))
                         val sample = if (unit == WeightUnit.Kg) 100.0 else 225.0
@@ -341,6 +354,15 @@ fun OnboardingScreen() {
             }
         }
     }
+}
+
+/** A sign-in or sign-up failure in words: never the server's raw response text. */
+private fun authErrorMessage(e: PbException, register: Boolean): String = when {
+    e.status == 0 -> if (register) "You're offline. Connect to create your account." else "You're offline. Connect to sign in."
+    !register && e.status == 400 -> "Wrong email or password."
+    e.status == 429 -> "Too many attempts. Wait a minute and try again."
+    e.status >= 500 -> "The server isn't responding. Try again soon."
+    else -> e.fieldMessage ?: if (register) "Couldn't create your account. Check your email and try again." else "Couldn't sign in. Try again."
 }
 
 /** The onboarding progress: one capsule per step, filled up to the current one, and "n of m". */
