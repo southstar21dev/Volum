@@ -86,6 +86,14 @@ certificate or profile is kept anywhere. It needs:
   gh secret set ASC_KEY_P8 < AuthKey_<key id>.p8
   ```
 
+To upload an existing release by hand (the latest unless a version is given):
+
+```sh
+gh workflow run release.yml --ref master -f testflight=true [-f version=1.2.3]
+```
+
+TestFlight rejects a build number it already has, so each release can be uploaded only once.
+
 Without them the job is skipped with a note in the run summary, and the release is unaffected. The
 team is passed to `xcodebuild` in the workflow; `iosApp/project.yml` keeps `DEVELOPMENT_TEAM`
 empty.
