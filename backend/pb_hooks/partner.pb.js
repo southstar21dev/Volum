@@ -382,6 +382,12 @@ onRecordUpdateRequest(
 
     // Sync pushes the whole record. Merge it per exercise and set with what's
     // stored, so partner edits made since that snapshot survive.
+    //
+    // The snapshot time is the server `updated` of the copy the push was based on
+    // (`syncBase`, sent by the app; not a record field). The pushed `updatedAt` is
+    // the owner's last local edit, which is later than a partner's set added before
+    // that edit but after the owner's last pull, so it would drop that set. Older
+    // apps don't send `syncBase` and keep the old behaviour.
     if (original.getString("status") === "active") {
       const { mergeEntries } = require(`${__hooks}/workout_merge.js`);
       const stored = JSON.parse(original.getString("entries") || "[]");
@@ -393,7 +399,12 @@ onRecordUpdateRequest(
           ),
         ),
       );
-      e.record.set("entries", mergeEntries(stored, incoming, e.record.getString("updatedAt"), removed));
+      const syncBase = (e.requestInfo().body || {}).syncBase;
+      const snapshotAt =
+        typeof syncBase === "string" && !Number.isNaN(Date.parse(syncBase.replace(" ", "T")))
+          ? syncBase
+          : e.record.getString("updatedAt");
+      e.record.set("entries", mergeEntries(stored, incoming, snapshotAt, removed));
       e.record.set("removedEntryIds", removed);
     }
     e.next();
