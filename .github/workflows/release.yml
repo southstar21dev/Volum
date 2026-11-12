@@ -5,7 +5,8 @@ name: Release
 # since the last tag; if any warrant one, it builds the signed APK and the unsigned IPA, tags the commit
 # and publishes a GitHub Release with the changelog and both files.
 # Obtainium (Android) watches the releases directly; AltStore/SideStore (iOS) read the sources the
-# second job publishes to GitHub Pages.
+# altstore-source job publishes to GitHub Pages. The testflight job sends the same release to
+# TestFlight as a signed App Store build.
 on:
   push:
     branches: [master]
@@ -30,6 +31,9 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: write
+    outputs:
+      # The published version, or empty when nothing was released.
+      version: ${{ steps.publish.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -90,17 +94,134 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
           echo "VOLUM_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
 
+      # .release-version is written by semantic-release's success step (.releaserc.json), so it
+      # exists only when a release was actually published; the testflight job reads the output.
       - name: Build, tag and publish
+        id: publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VOLUM_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           VOLUM_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           VOLUM_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: npx semantic-release
+        run: |
+          npx semantic-release
+          if [ -f .release-version ]; then
+            echo "version=$(cat .release-version)" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Remove the release key
         if: always()
         run: rm -f "$RUNNER_TEMP/release.jks"
+
+  # Sends the released version to TestFlight: a signed App Store build of the same commit and
+  # version as the GitHub release (the AltStore IPA stays unsigned). Runs only after a release was
+  # published, so TestFlight never gets a build that wasn't released. Signing is cloud-managed:
+  # xcodebuild fetches the distribution certificate and profiles with the App Store Connect API key,
+  # so no certificate is stored here. Skipped (with a note in the summary) until these secrets exist:
+  #   ASC_KEY_ID      the key's ID
+  #   ASC_ISSUER_ID   the issuer ID shown above the keys list
+  #   ASC_KEY_P8      the contents of the downloaded AuthKey_<id>.p8
+  # The key needs the Admin role (cloud-managed distribution signing requires it). The team is passed
+  # here rather than set in iosApp/project.yml, which keeps DEVELOPMENT_TEAM empty for local builds.
+  testflight:
+    name: TestFlight
+    needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.release.outputs.version != '' }}
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+      TEAM_ID: 3HNYQ2F575
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+    steps:
+      - id: key
+        name: Check for the App Store Connect key
+        run: |
+          if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "TestFlight upload skipped: set ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 to enable it." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - if: steps.key.outputs.ok == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - if: steps.key.outputs.ok == 'true'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - if: steps.key.outputs.ok == 'true'
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: true # the release job saves it
+
+      # Same as in CI: the Kotlin/Native toolchain isn't in the Gradle home, so cache it separately.
+      - id: kotlin
+        if: steps.key.outputs.ok == 'true'
+        name: Kotlin version
+        run: echo "version=$(sed -n 's/^kotlin = "\(.*\)"$/\1/p' gradle/libs.versions.toml)" >> "$GITHUB_OUTPUT"
+
+      - if: steps.key.outputs.ok == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ runner.arch }}-${{ steps.kotlin.outputs.version }}
+
+      - if: steps.key.outputs.ok == 'true'
+        name: Install XcodeGen
+        run: scripts/install-xcodegen.sh "$RUNNER_TEMP/xcodegen"
+
+      # As in scripts/build-release.sh: Gradle and the Xcode pre-build script both read it from here.
+      - if: steps.key.outputs.ok == 'true'
+        name: Set the version
+        run: sed -i '' "s/^volum.versionName=.*/volum.versionName=$VERSION/" gradle.properties
+
+      - if: steps.key.outputs.ok == 'true'
+        name: Archive and upload to TestFlight
+        run: |
+          KEY="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$KEY"
+          AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$KEY" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+          (cd iosApp && xcodegen generate --quiet)
+          xcodebuild archive \
+            -project iosApp/iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            -archivePath "$RUNNER_TEMP/Volum.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            "${AUTH[@]}"
+          # destination=upload: the export sends the build straight to App Store Connect.
+          cat > "$RUNNER_TEMP/export.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>uploadSymbols</key><true/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Volum.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            "${AUTH[@]}"
+          echo "Uploaded $VERSION to TestFlight; it appears there once App Store Connect finishes processing." >> "$GITHUB_STEP_SUMMARY"
+
+      - if: always() && steps.key.outputs.ok == 'true'
+        name: Remove the key
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
 
   altstore-source:
     name: AltStore/SideStore sources

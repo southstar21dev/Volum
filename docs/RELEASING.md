@@ -41,6 +41,9 @@ version into `gradle.properties` and builds:
 It then tags the commit and publishes a GitHub Release with the changelog and both files. The
 release job runs on macOS, since the IPA needs Xcode.
 
+Once a release is published, the `testflight` job archives a signed App Store build of the same
+commit and version and uploads it to TestFlight (see [TestFlight](#ios-testflight) below).
+
 Afterwards the `altstore-source` job rebuilds the AltStore/SideStore sources from the GitHub
 Releases and publishes them to GitHub Pages. Run the **Release** workflow by hand
 (`gh workflow run release.yml --ref master`) to republish them without releasing, e.g. after
@@ -62,6 +65,30 @@ SideStore*, or add a source by hand:
 
 Both apps then offer each new release as an update. With a free Apple ID, the app has to be
 refreshed every 7 days (AltStore/SideStore do this in the background).
+
+### iOS: TestFlight
+
+Every master release is also uploaded to TestFlight, under the paid team `3HNYQ2F575`. Testers in
+the app's internal group get each build once App Store Connect finishes processing it (usually
+5 to 15 minutes); external testers need a Beta App Review the first time.
+
+The job signs with cloud-managed certificates through an App Store Connect API key, so no
+certificate or profile is kept anywhere. It needs:
+
+- An app record in App Store Connect for the bundle ID `dev.southstar21.volum`.
+- An API key with the **Admin** role (Users and Access, Integrations, App Store Connect API). The
+  key is team-wide, so Vectra's key works here too.
+- Three repository secrets:
+
+  ```sh
+  gh secret set ASC_KEY_ID --body <key id>
+  gh secret set ASC_ISSUER_ID --body <issuer id>
+  gh secret set ASC_KEY_P8 < AuthKey_<key id>.p8
+  ```
+
+Without them the job is skipped with a note in the run summary, and the release is unaffected. The
+team is passed to `xcodebuild` in the workflow; `iosApp/project.yml` keeps `DEVELOPMENT_TEAM`
+empty.
 
 ## Versions
 
@@ -111,4 +138,5 @@ gh secret set KEY_ALIAS --body volum
 gh secret set KEY_PASSWORD
 ```
 
-iOS builds aren't signed in CI, so there is no Apple certificate to keep.
+The AltStore/SideStore IPA isn't signed. The TestFlight build uses cloud-managed signing, so there
+is no Apple certificate to keep either.

@@ -39,6 +39,7 @@ keystore.properties
 *.log
 
 # Build output and dependencies
+.release-version
 dist/
 node_modules/
 
