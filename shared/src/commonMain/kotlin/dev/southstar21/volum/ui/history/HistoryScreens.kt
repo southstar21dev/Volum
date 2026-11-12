@@ -29,6 +29,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,7 +47,6 @@ import androidx.compose.ui.unit.em
 import dev.southstar21.volum.model.SetEntry
 import dev.southstar21.volum.model.SetTag
 import dev.southstar21.volum.model.Workout
-import dev.southstar21.volum.model.WorkoutEntry
 import dev.southstar21.volum.progress.bestSetIn
 import dev.southstar21.volum.progress.volumeKg
 import dev.southstar21.volum.progress.workoutTime
@@ -74,10 +75,13 @@ import dev.southstar21.volum.ui.components.liquidGlass
 import dev.southstar21.volum.ui.components.ScreenTitle
 import dev.southstar21.volum.ui.components.rememberLast
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import dev.southstar21.volum.ui.session.SetEditSheet
+import dev.southstar21.volum.ui.session.blankSet
 import dev.southstar21.volum.ui.session.weightIn
 import dev.southstar21.volum.ui.theme.Bold
 import dev.southstar21.volum.ui.theme.ExtraBold
@@ -95,7 +99,6 @@ import dev.southstar21.volum.util.formatWeightValue
 import dev.southstar21.volum.util.localDateOf
 import dev.southstar21.volum.util.monthName
 import dev.southstar21.volum.util.newId
-import dev.southstar21.volum.util.parseTime
 import dev.southstar21.volum.util.plural
 import dev.southstar21.volum.util.timeOfDay
 import dev.southstar21.volum.util.toKg
@@ -115,7 +118,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import dev.southstar21.volum.ui.theme.LocalEntrance
 import dev.southstar21.volum.ui.theme.LocalReduceMotion
 import dev.southstar21.volum.ui.theme.VolumColors
-import dev.southstar21.volum.ui.theme.animatedNumber
+import dev.southstar21.volum.ui.theme.AnimatedNumber
 import dev.southstar21.volum.ui.theme.riseIn
 import dev.southstar21.volum.ui.theme.textStyle
 import dev.southstar21.volum.util.monthShort
@@ -152,7 +155,9 @@ fun HistoryScreen() {
     val completed = remember(workouts) { ownCompleted(workouts, session.user.id).sortedByDescending { workoutTime(it) } }
     val byDay = remember(completed) { completed.groupBy { localDateOf(workoutTime(it)) } }
     val today = localDateOf(now)
-    var deleteTarget by remember { mutableStateOf<Workout?>(null) }
+    // Kept by id, so an open delete prompt survives the activity being recreated.
+    var deleteTargetId by rememberSaveable { mutableStateOf<String?>(null) }
+    val deleteTarget = deleteTargetId?.let { workouts[it] }?.takeIf { !it.deleted }
 
     val inYear = remember(byDay, today.year) { byDay.entries.sumOf { (d, list) -> if (d.year == today.year) list.size else 0 } }
     val groups = remember(completed, today) {
@@ -195,7 +200,7 @@ fun HistoryScreen() {
                     Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().glassCard(RoundedCornerShape(24.dp)).padding(vertical = 2.dp)) {
                         list.forEachIndexed { i, w ->
                             if (i > 0) Divider(inset = 66.dp, end = 14.dp)
-                            WorkoutRow(w, onClick = { nav.push(Route.WorkoutDetail(w.id)) }, onLongClick = { deleteTarget = w })
+                            WorkoutRow(w, onClick = { nav.push(Route.WorkoutDetail(w.id)) }, onLongClick = { deleteTargetId = w.id })
                         }
                     }
                 }
@@ -210,7 +215,7 @@ fun HistoryScreen() {
         message = deleting?.let { "${weekdayName(localDateOf(workoutTime(it)))} ${localDateOf(workoutTime(it)).day} ${monthName(localDateOf(workoutTime(it)))}. This can't be undone." },
         confirm = "Delete workout",
         onConfirm = { deleting?.let { w -> scope.launch { session.repository.deleteWorkout(w.id) } } },
-        onDismiss = { deleteTarget = null },
+        onDismiss = { deleteTargetId = null },
     )
 }
 
@@ -221,7 +226,10 @@ private fun WorkoutRow(w: Workout, onClick: () -> Unit, onLongClick: () -> Unit)
     val sets = w.entries.sumOf { e -> e.sets.count { it.done } }
     val volume = formatVolume(volumeKg(w))
     Row(
-        Modifier.fillMaxWidth().tappable(onLongClick = onLongClick, onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().tappable(onLongClick = onLongClick, onClick = onClick)
+            // The long press, offered to screen readers by name.
+            .semantics { customActions = listOf(CustomAccessibilityAction("Delete workout") { onLongClick(); true }) }
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -272,11 +280,13 @@ private fun HeatmapCard(today: LocalDate, byDay: Map<LocalDate, List<Workout>>, 
 
     GlassCard(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp).fillMaxWidth()) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            HeatStat("${animatedNumber(stats.first.toDouble()).roundToInt()}", "", "week streak", Modifier.weight(1f))
-            val avg = animatedNumber(stats.second)
-            HeatStat(formatWeightValue((avg * 10).roundToInt() / 10.0), "", "a week, avg", Modifier.weight(1f))
-            val vol = formatVolume(animatedNumber(stats.third))
-            HeatStat(vol.substringBeforeLast(' '), vol.substringAfterLast(' '), "this week", Modifier.weight(1f))
+            // Each number counts up in its own scope, so the card around them doesn't recompose per frame.
+            AnimatedNumber(stats.first.toDouble()) { HeatStat("${it.roundToInt()}", "", "week streak", Modifier.weight(1f)) }
+            AnimatedNumber(stats.second) { avg -> HeatStat(formatWeightValue((avg * 10).roundToInt() / 10.0), "", "a week, avg", Modifier.weight(1f)) }
+            AnimatedNumber(stats.third) { v ->
+                val vol = formatVolume(v)
+                HeatStat(vol.substringBeforeLast(' '), vol.substringAfterLast(' '), "this week", Modifier.weight(1f))
+            }
         }
         Spacer(Modifier.height(14.dp))
         Heatmap(start, today, volumes, max, count, onDay)
@@ -400,10 +410,15 @@ fun WorkoutDetailScreen(workoutId: String) {
     if (live != null) lastSeen[0] = live
     val workout = live ?: lastSeen[0]?.takeIf { leaving }
     val c = Volum.colors
-    var editTarget by remember { mutableStateOf<Pair<WorkoutEntry, SetEntry>?>(null) }
-    var deletePrompt by remember { mutableStateOf(false) }
+    // The set being edited, as (entry id, set id) so it survives the activity being recreated. Resolved
+    // once per opening: a sync while the sheet is up mustn't reset what is being typed.
+    var editIds by rememberSaveable { mutableStateOf<Pair<String, String>?>(null) }
+    val editTarget = remember(editIds) {
+        editIds?.let { (entryId, setId) -> workout?.entries?.firstOrNull { it.id == entryId }?.let { e -> e.sets.firstOrNull { it.id == setId }?.let { e to it } } }
+    }
+    var deletePrompt by rememberSaveable { mutableStateOf(false) }
     // Which exercises are open. The first one done starts open, so the sets are a glance away.
-    var open by remember { mutableStateOf(workout?.entries?.firstOrNull { !it.isSkipped }?.id?.let { setOf(it) } ?: emptySet()) }
+    var open by rememberSaveable(stateSaver = IdSetSaver) { mutableStateOf(workout?.entries?.firstOrNull { !it.isSkipped }?.id?.let { setOf(it) } ?: emptySet()) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         TopInset(10.dp)
@@ -415,7 +430,7 @@ fun WorkoutDetailScreen(workoutId: String) {
             Mute("This workout was deleted.", Modifier.padding(24.dp))
             return@Column
         }
-        val d = localDateOf(parseTime(workout.startedAt))
+        val d = localDateOf(workoutTime(workout))
         val sets = workout.entries.sumOf { e -> e.sets.count { it.done } }
         val duration = durationLabel(workout.startedAt, workout.finishedAt)
 
@@ -431,10 +446,12 @@ fun WorkoutDetailScreen(workoutId: String) {
                 Txt(workout.routineName, size = T.Big, weight = ExtraBold, maxLines = 2)
                 Mute(listOf("${weekdayShort(d)} ${d.day} ${monthShort(d)}", duration, plural(sets, "set")).filter { it.isNotEmpty() }.joinToString(" · "), size = T.Small, maxLines = 1)
             }
-            val volume = formatVolume(animatedNumber(volumeKg(workout)))
-            Row(verticalAlignment = Alignment.Bottom) {
-                Txt(volume.substringBeforeLast(' '), size = T.Heading, weight = ExtraBold, tracking = (-0.02).em, tabular = true, maxLines = 1)
-                Txt(" " + volume.substringAfterLast(' '), Modifier.padding(bottom = 3.dp), size = T.Small, weight = Semibold, color = c.mute, maxLines = 1)
+            AnimatedNumber(volumeKg(workout)) { v ->
+                val volume = formatVolume(v)
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Txt(volume.substringBeforeLast(' '), size = T.Heading, weight = ExtraBold, tracking = (-0.02).em, tabular = true, maxLines = 1)
+                    Txt(" " + volume.substringAfterLast(' '), Modifier.padding(bottom = 3.dp), size = T.Small, weight = Semibold, color = c.mute, maxLines = 1)
+                }
             }
         }
 
@@ -470,12 +487,13 @@ fun WorkoutDetailScreen(workoutId: String) {
                             entry.sets.forEach { set ->
                                 val label = when (set.tag) { SetTag.Warmup -> "W"; SetTag.Drop -> "D"; null -> "${++n}" }
                                 val top = set.id == topId
-                                SetRow(label, setText(set, entry.isTimed, prefs.unit), done = set.done, top = top) { editTarget = entry to set }
+                                SetRow(label, setText(set, entry.isTimed, prefs.unit), done = set.done, top = top) { editIds = entry.id to set.id }
                             }
                             Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Pill(height = 38.dp, onClick = {
+                                Pill(height = 38.dp, debounce = false, onClick = {
                                     val last = entry.sets.lastOrNull()
-                                    val set = last?.copy(id = newId(), updatedAt = null) ?: SetEntry(id = newId(), unit = prefs.unit, reps = 8, done = true)
+                                    val set = last?.copy(id = newId(), updatedAt = null)
+                                        ?: blankSet(entry.isTimed, prefs.unit, done = true)
                                     scope.launch { session.repository.updateWorkout(workout, workout.entries.map { if (it.id == entry.id) it.copy(sets = it.sets + set) else it }) }
                                 }) {
                                     Icon(Icons.Plus, c.accent, size = 14.dp)
@@ -497,7 +515,7 @@ fun WorkoutDetailScreen(workoutId: String) {
         editTarget, prefs.unit,
         onSave = { entry, set -> workout?.let { w -> scope.launch { session.repository.updateWorkout(w, w.entries.map { e -> if (e.id == entry.id) e.copy(sets = e.sets.map { if (it.id == set.id) set else it }) else e }) } } },
         onRemove = { entry, set -> workout?.let { w -> scope.launch { session.repository.updateWorkout(w, w.entries.map { e -> if (e.id == entry.id) e.copy(sets = e.sets.filterNot { it.id == set.id }) else e }) } } },
-        onDismiss = { editTarget = null },
+        onDismiss = { editIds = null },
     )
     ConfirmSheet(
         open = deletePrompt,
@@ -513,6 +531,8 @@ fun WorkoutDetailScreen(workoutId: String) {
         onDismiss = { deletePrompt = false },
     )
 }
+
+private val IdSetSaver = listSaver<Set<String>, String>(save = { it.toList() }, restore = { it.toSet() })
 
 /** One set: a milky row, the top set in forest gel. Tap to edit. */
 @Composable

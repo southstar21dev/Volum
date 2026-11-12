@@ -46,8 +46,23 @@ private final class PassthroughView: UIView {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard let tabs, tabs.isInteractive else { return nil }
         let bar = tabs.tabBar
-        guard bar.point(inside: convert(point, to: bar), with: event) else { return nil }
-        return super.hitTest(point, with: event)
+        guard bar.point(inside: convert(point, to: bar), with: event),
+              let hit = super.hitTest(point, with: event),
+              hit.isDescendant(of: bar)
+        else { return nil }
+        // Before iOS 26 the bar is drawn across its whole frame, so all of it is the bar's.
+        guard #available(iOS 26.0, *) else { return hit }
+        // On iOS 26 the frame is still the full-width strip, but all that's drawn is a floating capsule
+        // and the round +. A touch in the gaps lands on the bar or a container as wide as it: give it
+        // to the Compose app underneath. Controls, and anything narrower than the bar, are its items.
+        var view: UIView? = hit
+        while let current = view, current !== bar {
+            if current is UIControl { return hit }
+            view = current.superview
+        }
+        guard hit !== bar else { return nil }
+        let width = hit.convert(hit.bounds, to: bar).width
+        return width < bar.bounds.width - 1 ? hit : nil
     }
 }
 
@@ -102,7 +117,7 @@ final class TabBarHost: UITabBarController, UITabBarControllerDelegate, IosTabBa
     func render(state: SystemNavbarState) {
         loadViewIfNeeded()
         self.state = state
-        let wanted = state.showAction ? mainTabs + [actionTab] : mainTabs
+        let wanted = mainTabs + [actionTab]
         if tabs.map(\.identifier) != wanted.map(\.identifier) {
             setTabs(wanted, animated: view.window != nil && view.alpha > 0)
         }

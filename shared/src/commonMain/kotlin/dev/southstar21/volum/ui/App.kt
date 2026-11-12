@@ -6,6 +6,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -43,6 +44,7 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,8 +84,7 @@ import dev.southstar21.volum.ui.components.OverlayHost
 import dev.southstar21.volum.ui.components.OverlayLayer
 import dev.southstar21.volum.ui.components.Txt
 import dev.southstar21.volum.ui.components.liquidGlass
-import dev.southstar21.volum.ui.components.liquidRim
-import dev.southstar21.volum.ui.components.liquidSheen
+import dev.southstar21.volum.ui.components.rememberLiquidPane
 import dev.southstar21.volum.ui.components.readableWidth
 import dev.southstar21.volum.ui.history.HistoryScreen
 import dev.southstar21.volum.ui.history.WorkoutDetailScreen
@@ -94,6 +95,7 @@ import dev.southstar21.volum.ui.profile.PairPartnerScreen
 import dev.southstar21.volum.ui.profile.ProfileScreen
 import dev.southstar21.volum.ui.routines.RoutineEditorScreen
 import dev.southstar21.volum.ui.session.PartnerSessionScreen
+import dev.southstar21.volum.ui.session.RetainLiveHolds
 import dev.southstar21.volum.ui.session.SessionScreen
 import dev.southstar21.volum.ui.theme.Bold
 import dev.southstar21.volum.ui.theme.Durations
@@ -103,6 +105,7 @@ import dev.southstar21.volum.ui.theme.ExtraBold
 import dev.southstar21.volum.ui.theme.Icon
 import dev.southstar21.volum.ui.theme.Icons
 import dev.southstar21.volum.ui.theme.LocalEntrance
+import dev.southstar21.volum.ui.theme.LocalReduceMotion
 import dev.southstar21.volum.ui.theme.Semibold
 import dev.southstar21.volum.ui.theme.T
 import dev.southstar21.volum.ui.theme.Volum
@@ -133,30 +136,56 @@ data class Screen(val route: Route, val id: Int)
 /**
  * The back stack: a tab's root at the bottom, pushed screens above it. Saved with the activity (and
  * across process death), so a recreated app comes back on the same screen.
+ *
+ * Each screen sees it through [forScreen]: a page stays composed and tappable for its whole exit
+ * transition, so a second tap on a button that pushed or popped would otherwise move again (two
+ * Session screens, a double pop). Once a screen is no longer on top, its pushes and pops are dropped.
  */
 @Stable
-class Navigator private constructor(initial: List<Screen>) {
-    val stack = mutableStateListOf<Screen>().apply { addAll(initial) }
-    private var nextId = (initial.maxOfOrNull { it.id } ?: 0).coerceAtLeast(0) + 1
+class Navigator private constructor(private val core: Core, private val owner: Int?) {
+    private class Core(initial: List<Screen>) {
+        val stack = mutableStateListOf<Screen>().apply { addAll(initial) }
+        var nextId = (initial.maxOfOrNull { it.id } ?: 0).coerceAtLeast(0) + 1
+        var forward by mutableStateOf(true)
+    }
+
+    val stack: SnapshotStateList<Screen> get() = core.stack
 
     /** Whether the last move went deeper (a push or a tab pick) rather than back. */
-    var forward by mutableStateOf(true)
-        private set
+    val forward: Boolean get() = core.forward
 
     val tab: Tab get() = (stack.first().route as Route.Root).tab
     val atRoot: Boolean get() = stack.size <= 1
     val top: Route get() = stack.last().route
 
-    fun push(route: Route) { forward = true; stack.add(Screen(route, nextId++)) }
-    fun pop() { if (stack.size > 1) { forward = false; stack.removeAt(stack.lastIndex) } }
-    fun replace(route: Route) { forward = true; if (stack.size > 1) stack.removeAt(stack.lastIndex); stack.add(Screen(route, nextId++)) }
+    /** False for a screen that has already been covered or popped. */
+    private val onTop: Boolean get() = owner == null || stack.lastOrNull()?.id == owner
+
+    /** Pushes [route], unless this screen is no longer on top or [route] is already showing. */
+    fun push(route: Route): Boolean {
+        if (!onTop || top == route) return false
+        core.forward = true
+        stack.add(Screen(route, core.nextId++))
+        return true
+    }
+
+    /** Pops the top screen, unless this screen is no longer on top. */
+    fun pop(): Boolean {
+        if (!onTop || stack.size <= 1) return false
+        core.forward = false
+        stack.removeAt(stack.lastIndex)
+        return true
+    }
+
     /**
      * A tab's root always has the same id. Coming back to a tab while the page transition away from
      * it is still running then picks up the page that's leaving, instead of composing a second copy
      * of it beside the first: two copies both claimed the tab's saved state and crashed the app.
      */
-    fun select(t: Tab) { forward = true; stack.clear(); stack.add(Screen(Route.Root(t), rootId(t))) }
-    fun popToRoot() { forward = false; while (stack.size > 1) stack.removeAt(stack.lastIndex) }
+    fun select(t: Tab) { core.forward = true; stack.clear(); stack.add(Screen(Route.Root(t), rootId(t))) }
+
+    /** The same back stack, as seen by the screen with [id]. */
+    fun forScreen(id: Int): Navigator = Navigator(core, id)
 
     companion object {
         private val serializer = ListSerializer(Screen.serializer())
@@ -164,14 +193,14 @@ class Navigator private constructor(initial: List<Screen>) {
         /** Tab roots' ids, negative so they never meet a pushed screen's. */
         private fun rootId(t: Tab) = -1 - t.ordinal
 
-        fun initial() = Navigator(listOf(Screen(Route.Root(Tab.Today), rootId(Tab.Today))))
+        fun initial() = Navigator(Core(listOf(Screen(Route.Root(Tab.Today), rootId(Tab.Today)))), owner = null)
 
         val Saver: Saver<Navigator, String> = Saver(
             save = { VolumJson.encodeToString(serializer, it.stack.toList()) },
             restore = { saved ->
                 runCatching { VolumJson.decodeFromString(serializer, saved) }.getOrNull()
                     ?.takeIf { it.firstOrNull()?.route is Route.Root }
-                    ?.let(::Navigator)
+                    ?.let { Navigator(Core(it), owner = null) }
             },
         )
     }
@@ -238,6 +267,7 @@ fun VolumApp(app: AppContainer) {
                     }
                 }
                 ForegroundSync(session)
+                RetainLiveHolds(session)
                 OverlayLayer(overlays)
             }
         }
@@ -246,12 +276,16 @@ fun VolumApp(app: AppContainer) {
 
 private enum class Gate { Loading, Auth, Onboarding, Main }
 
-/** Sync polls quickly during a workout only while the app is on screen. */
+/**
+ * Sync polls quickly during a workout only while the app is on screen. Coming back to the foreground
+ * also checks the sign-in token's age: the periodic check can't run while the process is suspended.
+ */
 @Composable
 private fun ForegroundSync(session: UserSession?) {
     if (session == null) return
     LifecycleStartEffect(session) {
         session.sync.foreground = true
+        session.app.refreshAuthIfStale()
         onStopOrDispose { session.sync.foreground = false }
     }
 }
@@ -270,13 +304,13 @@ private fun MainShell(overlays: OverlayHost) {
     if (navbar != null) {
         // The system bar can't fade with the app as it arrives after log in: it shows once that's done.
         val shown = dockVisible && LocalNativeViewsSettled.current
-        LaunchedEffect(nav.tab, shown) {
+        val accent = argb(c.accent)
+        LaunchedEffect(nav.tab, shown, accent) {
             navbar.update(
                 SystemNavbarState(
                     selectedIndex = nav.tab.ordinal,
-                    showAction = true,
                     hidden = !shown,
-                    accentArgb = argb(c.accent),
+                    accentArgb = accent,
                 ),
             )
         }
@@ -296,17 +330,20 @@ private fun MainShell(overlays: OverlayHost) {
         val density = LocalDensity.current
         val statusBar = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
         val navBar = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
+        val reduce = LocalReduceMotion.current
         Box(Modifier.fillMaxSize()) {
             // The screens are recorded so the edge strips can blur what scrolls under them.
             Box(Modifier.fillMaxSize().layerBackdrop(content)) {
-                // Back (Android's predictive back, iOS's edge swipe) drives the pop transition itself.
+                // Back (Android's predictive back, iOS's edge swipe) drives the pop transition itself. It
+                // pops through the shell's navigator: by the time it lands the gesture has already played
+                // the transition, so it must not be refused.
                 NavDisplay(
                     backStack = nav.stack,
                     onBack = { nav.pop() },
                     entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator()),
-                    transitionSpec = { pushTransition(forward = true) },
-                    popTransitionSpec = { pushTransition(forward = false) },
-                    predictivePopTransitionSpec = { pushTransition(forward = false) },
+                    transitionSpec = { pushTransition(forward = true, reduce) },
+                    popTransitionSpec = { pushTransition(forward = false, reduce) },
+                    predictivePopTransitionSpec = { pushTransition(forward = false, reduce) },
                     entryProvider = { screen ->
                         NavEntry(screen, contentKey = screen.id) { ScreenContent(it, nav, tabStates, overlays) }
                     },
@@ -318,7 +355,6 @@ private fun MainShell(overlays: OverlayHost) {
                 AndroidDock(
                     visible = dockVisible,
                     selected = nav.tab,
-                    showAction = true,
                     onSelect = { nav.select(it) },
                     onAction = { nav.push(Route.RoutineEditor(null)) },
                     modifier = Modifier.align(Alignment.BottomCenter),
@@ -338,7 +374,7 @@ private fun MainShell(overlays: OverlayHost) {
 private fun BottomStrip(content: Backdrop, atRoot: Boolean, navBar: Dp, modifier: Modifier) {
     val dock by animateFloatAsState(
         if (atRoot) 1f else 0f,
-        tween(Durations.Page, easing = Easings.Standard),
+        if (LocalReduceMotion.current) snap() else tween(Durations.Page, easing = Easings.Standard),
         label = "bottomStrip",
     )
     EdgeBlur(
@@ -361,7 +397,9 @@ private fun ScreenContent(screen: Screen, nav: Navigator, tabStates: SaveableSta
     // Native controls float above Compose: they step aside while the page moves or a sheet covers it.
     val settled = LocalNativeViewsSettled.current && still && !overlays.isShowing
     val route = screen.route
+    val screenNav = remember(nav, screen.id) { nav.forScreen(screen.id) }
     CompositionLocalProvider(
+        LocalNav provides screenNav,
         LocalEntrance provides entrance,
         LocalNativeViewsSettled provides settled,
         LocalDockPadding provides if (route is Route.Root) 112.dp else 0.dp,
@@ -398,9 +436,11 @@ private fun argb(color: androidx.compose.ui.graphics.Color): Int {
  * read as one jumbled page. The fades are therefore sequenced rather than crossed: the page being left
  * fades out first, and the one arriving only fades in once the other is mostly gone. A back swipe seeks
  * this same transition with the finger, so the page underneath stays hidden until the top page is
- * about halfway off, instead of showing through it from the first pixel.
+ * about halfway off, instead of showing through it from the first pixel. With Reduce Motion on, pages
+ * only fade, in the same order.
  */
-private fun pushTransition(forward: Boolean): ContentTransform {
+private fun pushTransition(forward: Boolean, reduce: Boolean): ContentTransform {
+    if (reduce) return fadeIn(tween(Durations.Enter, delayMillis = Durations.Exit)) togetherWith fadeOut(tween(Durations.Exit))
     val page = Durations.Page
     val slide = tween<IntOffset>(page, easing = Easings.Standard)
     val scale = tween<Float>(page, easing = Easings.Standard)
@@ -440,8 +480,10 @@ private fun RouteContent(route: Route) {
 
 /** Android: a Kyant liquid-glass dock with the four tabs, plus a separate round + for new routines. */
 @Composable
-private fun AndroidDock(visible: Boolean, selected: Tab, showAction: Boolean, onSelect: (Tab) -> Unit, onAction: () -> Unit, modifier: Modifier = Modifier) {
+private fun AndroidDock(visible: Boolean, selected: Tab, onSelect: (Tab) -> Unit, onAction: () -> Unit, modifier: Modifier = Modifier) {
     val c = Volum.colors
+    val reduce = LocalReduceMotion.current
+    val pane = rememberLiquidPane()
     val alpha = remember { Animatable(if (visible) 1f else 0f) }
     LaunchedEffect(visible) {
         alpha.animateTo(if (visible) 1f else 0f, if (visible) tween(Durations.Enter, easing = Easings.Enter) else tween(Durations.Exit, easing = Easings.Exit))
@@ -457,7 +499,7 @@ private fun AndroidDock(visible: Boolean, selected: Tab, showAction: Boolean, on
             .fillMaxWidth()
             .navigationBarsPadding()
             .padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
-            .graphicsLayer { this.alpha = alpha.value; translationY = (1f - alpha.value) * 40.dp.toPx() },
+            .graphicsLayer { this.alpha = alpha.value; translationY = if (reduce) 0f else (1f - alpha.value) * 40.dp.toPx() },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -470,11 +512,7 @@ private fun AndroidDock(visible: Boolean, selected: Tab, showAction: Boolean, on
             // What the selection drop shows the pane as: a solid stand-in for the glass below.
             container = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.66f),
             // The mockups' `.lg` glass: a white gradient (not a dark tint) with its rim and sheen.
-            surface = { shape ->
-                drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(c.liquidTop, c.liquidBottom)))
-                liquidSheen(shape, c)
-                liquidRim(shape, c)
-            },
+            surface = pane,
             // iOS's selected-tab platter: the bar's glass a shade darker, tinted by what's behind it
             // (sage here), over the near-white stand-in the selection draws on.
             selection = androidx.compose.ui.graphics.Color(0xFF5F7F45).copy(alpha = 0.24f),
@@ -488,12 +526,10 @@ private fun AndroidDock(visible: Boolean, selected: Tab, showAction: Boolean, on
             Icon(tabIcons[index], ink, size = 26.dp)
             Txt(Tab.entries[index].label, size = T.Tiny, weight = Bold, color = ink, maxLines = 1)
         }
-        if (showAction) {
-            Box(
-                Modifier.size(62.dp).tappable(haptic = true, onClick = onAction).liquidGlass(CircleShape).semantics { contentDescription = "New routine" },
-                contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Plus, c.ink, size = 24.dp) }
-        }
+        Box(
+            Modifier.size(62.dp).tappable(haptic = true, onClick = onAction).liquidGlass(CircleShape).semantics { contentDescription = "New routine" },
+            contentAlignment = Alignment.Center,
+        ) { Icon(Icons.Plus, c.ink, size = 24.dp) }
     }
 }
 

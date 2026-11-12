@@ -9,6 +9,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
@@ -184,16 +187,31 @@ fun Modifier.popIn(delayMillis: Long = 0): Modifier {
     }
 }
 
-/** Animates a number toward [target], counting up from zero on entrance. */
+/**
+ * Animates a number toward [target], counting up from zero on entrance. Reading the value recomposes the
+ * caller on every frame of the count; prefer [animatedNumberState] or [AnimatedNumber], which keep that
+ * to the scope that shows the number.
+ */
 @Composable
-fun animatedNumber(target: Double): Double {
+fun animatedNumber(target: Double): Double = animatedNumberState(target).value
+
+/** [animatedNumber] as state: read it only where the number is drawn, so only that scope recomposes. */
+@Composable
+fun animatedNumberState(target: Double): State<Double> {
     val entrance = LocalEntrance.current
     val reduce = LocalReduceMotion.current
     val v = remember { Animatable(if (!reduce && entrance?.active() == true) 0f else target.toFloat()) }
     LaunchedEffect(target, reduce) {
         if (reduce) v.snapTo(target.toFloat()) else v.animateTo(target.toFloat(), tween(Durations.Count, easing = Easings.Standard))
     }
-    return v.value.toDouble()
+    return remember(v) { derivedStateOf { v.value.toDouble() } }
+}
+
+/** Shows [content] with [target] counting toward it; only [content] recomposes as the number moves. */
+@Composable
+fun AnimatedNumber(target: Double, content: @Composable (value: Double) -> Unit) {
+    val value by animatedNumberState(target)
+    content(value)
 }
 
 /**

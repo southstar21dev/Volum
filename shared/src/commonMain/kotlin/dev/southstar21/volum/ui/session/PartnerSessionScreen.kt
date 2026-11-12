@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
 import dev.southstar21.volum.ui.components.ErrorText
 import dev.southstar21.volum.ui.components.rememberLast
@@ -63,8 +64,8 @@ import dev.southstar21.volum.ui.theme.Bold
 import dev.southstar21.volum.ui.theme.ExtraBold
 import dev.southstar21.volum.ui.theme.Icons
 import dev.southstar21.volum.ui.theme.Volum
-import dev.southstar21.volum.util.newId
 import dev.southstar21.volum.util.plural
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -98,12 +99,20 @@ fun PartnerSessionScreen(workoutId: String) {
         else if (inFlight[0] == 0) { workout = w; error = null }
     }
 
+    // Any failure, not just the server's: one escaping into this screen's scope would crash the app.
+    fun fail(e: Exception) {
+        if (e is PbException && e.status == 404) ended = true
+        else error = if (e is PbException) partnerErrorMessage(e) else "Something went wrong"
+    }
+
     suspend fun load() {
         try {
             val w = session.partner.fetchWorkout(workoutId)
             if (w == null) ended = true else receive(w)
-        } catch (e: PbException) {
-            if (e.status == 404) ended = true else error = partnerErrorMessage(e)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            fail(e)
         }
     }
     // Polled and followed live only while the app is on screen.
@@ -127,12 +136,13 @@ fun PartnerSessionScreen(workoutId: String) {
         inFlight[0]++
         scope.launch {
             try {
-                val answer = session.partner.mutate(workoutId, m)
-                inFlight[0]--
+                // Counted down however the call ends, or receive() would ignore every later server copy.
+                val answer = try { session.partner.mutate(workoutId, m) } finally { inFlight[0]-- }
                 answer?.let(::receive)
-            } catch (e: PbException) {
-                inFlight[0]--
-                if (e.status == 404) ended = true else error = partnerErrorMessage(e)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail(e)
                 if (inFlight[0] == 0) load()
             }
         }
@@ -147,15 +157,18 @@ fun PartnerSessionScreen(workoutId: String) {
             mutate(WorkoutMutation.Set(entry.id, set.id, set.copy(done = !set.done)))
         },
         onEditSet = { entry, set -> editTarget = entry to set },
-        onAddSet = { entry ->
-            val last = entry.sets.lastOrNull()
-            mutate(WorkoutMutation.AddSet(entry.id, last?.copy(id = newId(), done = false, tag = null, updatedAt = null) ?: SetEntry(id = newId(), unit = prefs.unit, reps = 8)))
-        },
+        onAddSet = { entry -> mutate(WorkoutMutation.AddSet(entry.id, nextSet(entry, prefs.unit))) },
         onMenu = { menuEntry = it },
         onExpand = { e -> expandedId = if (expandedId == e.id) null else e.id },
+        keepSetUnits = true,
     )
 
     val w = workout
+    // Holds of sets removed here or by the owner, or of a workout that ended, are dropped.
+    val shownSets = remember(w, ended) { if (ended) emptySet() else w?.entries?.flatMap { e -> e.sets.map { it.id } }.orEmpty().toSet() }
+    ForgetRemovedHolds(shownSets)
+    // So its holds go when the workout ends even after this screen is closed (see RetainLiveHolds).
+    SideEffect { if (shownSets.isNotEmpty()) Stopwatches.showPartnerSets(workoutId, shownSets) }
     when {
         ended || w == null -> Column(Modifier.fillMaxSize()) {
             TopInset(10.dp)
@@ -221,6 +234,7 @@ fun PartnerSessionScreen(workoutId: String) {
         onSave = { entry, set -> mutate(WorkoutMutation.Set(entry.id, set.id, set)) },
         onRemove = { entry, set -> mutate(WorkoutMutation.RemoveSet(entry.id, set.id)) },
         onDismiss = { editTarget = null },
+        keepSetUnit = true,
     )
     val m = rememberLast(menuEntry)
     ActionSheet(
@@ -229,21 +243,32 @@ fun PartnerSessionScreen(workoutId: String) {
         actions = if (m == null) emptyList() else listOf(
             SheetAction("Rename", Icons.Pencil) { renameEntry = m },
             SheetAction(if (m.isSkipped) "Unskip" else "Skip", Icons.Skip) { mutate(WorkoutMutation.UpdateEntry(m.id, skipped = !m.isSkipped)) },
-            SheetAction("Delete", Icons.Trash, destructive = true) { deleteEntry = m },
-        ),
+            // Not the last one: the server refuses a workout with no exercises, and only its owner can discard it.
+            if ((w?.entries?.size ?: 0) > 1) SheetAction("Delete", Icons.Trash, destructive = true) { deleteEntry = m } else null,
+        ).filterNotNull(),
         onDismiss = { menuEntry = null },
     )
     RenameExerciseSheet(
         entry = renameEntry,
         exercises = library,
         canUpdateRoutine = false,
+        // Neither their routine nor their library is yours to change from here.
+        ownerId = null,
+        linkOwner = workout?.owner,
         onSave = { name, link, _, _ ->
             val e = renameEntry ?: return@RenameExerciseSheet
-            mutate(if (link != null) WorkoutMutation.UpdateEntry(e.id, name = link.name, exerciseId = link.id, timed = link.isTimed) else WorkoutMutation.UpdateEntry(e.id, name = name))
+            if (link == null) {
+                mutate(WorkoutMutation.UpdateEntry(e.id, name = name))
+            } else {
+                val current = workout?.entries?.firstOrNull { it.id == e.id } ?: e
+                mutate(WorkoutMutation.UpdateEntry(e.id, name = link.name, exerciseId = link.id, timed = link.isTimed))
+                // Relinked to a lift tracked the other way (time or reps), its sets change shape too.
+                if (current.isTimed != link.isTimed) current.sets.forEach { set -> mutate(WorkoutMutation.Set(e.id, set.id, reshapeSet(set, link.isTimed))) }
+            }
         },
         onDismiss = { renameEntry = null },
     )
-    DeleteExerciseSheet(deleteEntry, null, onDelete = { deleteEntry?.let { e -> mutate(WorkoutMutation.RemoveEntry(e.id)) } }, onDismiss = { deleteEntry = null })
+    DeleteExerciseSheet(deleteEntry, null, onDelete = { e, _ -> mutate(WorkoutMutation.RemoveEntry(e.id)) }, onDismiss = { deleteEntry = null })
     AddExerciseSheet(
         open = addOpen,
         exercises = library,
@@ -252,7 +277,14 @@ fun PartnerSessionScreen(workoutId: String) {
         onPick = { ex -> mutate(WorkoutMutation.AddEntry(session.repository.buildAddedEntry(ex.id, ex.name, ex.isTimed, prefs.unit, fromHistory = false))) },
         onCreate = { name ->
             scope.launch {
-                val ex = session.repository.findOrCreateExercise(name)
+                val ex = try {
+                    session.repository.findOrCreateExercise(name)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    fail(e)
+                    return@launch
+                }
                 mutate(WorkoutMutation.AddEntry(session.repository.buildAddedEntry(ex.id, ex.name, ex.isTimed, prefs.unit, fromHistory = false)))
             }
         },

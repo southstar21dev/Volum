@@ -1,10 +1,8 @@
 package dev.southstar21.volum.platform
 
-/** Everything the platform tab bar needs to draw itself. */
+/** Everything the platform tab bar needs to draw itself. The round + (new routine) always shows beside it. */
 data class SystemNavbarState(
     val selectedIndex: Int,
-    /** Shows the separate round + (new routine) beside the bar. */
-    val showAction: Boolean,
     /** True while a sheet is open or a screen is pushed. */
     val hidden: Boolean,
     /** Accent colour as 0xAARRGGBB. */

@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import dev.southstar21.volum.data.PbException
+import dev.southstar21.volum.data.SyncProblem
 import dev.southstar21.volum.data.SyncState
 import dev.southstar21.volum.data.partnerErrorMessage
 import dev.southstar21.volum.model.WeightUnit
@@ -59,7 +60,6 @@ import dev.southstar21.volum.ui.components.glassCard
 import dev.southstar21.volum.ui.components.milky
 import dev.southstar21.volum.ui.components.ErrorText
 import dev.southstar21.volum.ui.components.ScreenTitle
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -76,6 +76,8 @@ import dev.southstar21.volum.util.parseTime
 import dev.southstar21.volum.util.plural
 import dev.southstar21.volum.util.timeOfDay
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.saveable.rememberSaveable
+import kotlin.coroutines.cancellation.CancellationException
 
 @Composable
 fun ProfileScreen() {
@@ -87,12 +89,38 @@ fun ProfileScreen() {
     val user by app.user.collectAsStateWithLifecycle()
     val snapshot by session.partner.snapshot.collectAsStateWithLifecycle()
     val sync by session.sync.status.collectAsStateWithLifecycle()
+    val writeError by session.store.writeError.collectAsStateWithLifecycle()
     val c = Volum.colors
-    var editName by remember { mutableStateOf(false) }
+    var editName by rememberSaveable { mutableStateOf(false) }
     var unpair by remember { mutableStateOf(false) }
+    var unpairing by remember { mutableStateOf(false) }
+    var partnerError by remember { mutableStateOf<String?>(null) }
     var signOut by remember { mutableStateOf(false) }
     val name = user?.name.orEmpty().ifBlank { user?.email.orEmpty() }
     val partner = snapshot.partner
+    var draft by rememberSaveable { mutableStateOf(name) }
+    var nameError by remember { mutableStateOf<String?>(null) }
+
+    fun unpairPartner() {
+        if (unpairing) return
+        unpairing = true
+        partnerError = null
+        scope.launch {
+            try {
+                session.partner.unpair()
+                // Only once the server has dropped the pairing: a failed unpair keeps the partner's records.
+                session.repository.deletePartnerLocalData()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: PbException) {
+                partnerError = partnerErrorMessage(e)
+            } catch (e: Exception) {
+                partnerError = "Something went wrong"
+            } finally {
+                unpairing = false
+            }
+        }
+    }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         TopInset(26.dp)
@@ -102,7 +130,8 @@ fun ProfileScreen() {
                 Txt(name, size = T.Entry, weight = ExtraBold, tracking = T.TitleTracking, maxLines = 1)
                 Mute(user?.email.orEmpty(), size = T.Label, maxLines = 1)
             }
-            GlassButton("Edit", height = 40.dp) { editName = true }
+            // Each opening starts from the current name, not a cancelled draft or an old error.
+            GlassButton("Edit", height = 40.dp) { draft = name; nameError = null; editName = true }
         }
 
         Label("Training together")
@@ -113,7 +142,7 @@ fun ProfileScreen() {
                     Txt(partner.displayName, size = T.Body, weight = Bold, maxLines = 1)
                     Mute("${partner.email} · sharing routines and lifts", size = T.Caption, maxLines = 2)
                 }
-                TextButton("Unpair", color = c.danger, size = T.Small) { unpair = true }
+                TextButton("Unpair", color = c.danger, size = T.Small) { if (!unpairing) unpair = true }
             }
         } else {
             val incoming = snapshot.incoming.size
@@ -126,11 +155,12 @@ fun ProfileScreen() {
                 Icon(Icons.ChevronRight, c.mute, size = 18.dp)
             }
         }
+        partnerError?.let { ErrorText(it, Modifier.padding(start = 24.dp, end = 24.dp, top = 10.dp), weight = Semibold) }
 
         Label("Training")
         Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().glassCard(RoundedCornerShape(24.dp)).padding(vertical = 4.dp)) {
             SettingRow("Weight unit") {
-                Segmented(listOf("kg", "lb"), if (prefs.unit == WeightUnit.Kg) 0 else 1, { i -> app.updatePrefs { it.copy(unit = if (i == 0) WeightUnit.Kg else WeightUnit.Lb) } }, height = 32.dp)
+                Segmented(listOf("kg", "lb"), if (prefs.unit == WeightUnit.Kg) 0 else 1, { i -> app.updatePrefs { it.copy(unit = if (i == 0) WeightUnit.Kg else WeightUnit.Lb) } }, height = 40.dp)
             }
             Mute("Weights always show in both units.", Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp), size = T.Caption)
         }
@@ -138,7 +168,7 @@ fun ProfileScreen() {
         Label("Appearance")
         Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().glassCard(RoundedCornerShape(24.dp)).padding(vertical = 4.dp)) {
             SettingRow("Background") {
-                Segmented(listOf("Glow", "Solid"), if (prefs.solidBackground) 1 else 0, { i -> app.updatePrefs { it.copy(solidBackground = i == 1) } }, height = 32.dp)
+                Segmented(listOf("Glow", "Solid"), if (prefs.solidBackground) 1 else 0, { i -> app.updatePrefs { it.copy(solidBackground = i == 1) } }, height = 40.dp)
             }
         }
 
@@ -148,15 +178,26 @@ fun ProfileScreen() {
                 SyncState.Synced -> Quad("Up to date", sync.lastSyncedAt?.let { "Synced at ${timeOfDay(parseTime(it))}" } ?: "Synced", Icons.CloudCheck, c.accent)
                 SyncState.Pending -> Quad("Syncing", plural(sync.pendingCount, "change") + " waiting", Icons.CloudSync, c.ink)
                 SyncState.Offline -> Quad("Offline", plural(sync.pendingCount, "change") + " saved on this phone", Icons.CloudOff, c.mute)
-                SyncState.Error -> Quad("Sync error", sync.lastError ?: "Tap to retry", Icons.CloudOff, c.danger)
+                SyncState.Error -> Quad("Sync error", syncErrorDetail(sync.problem), Icons.CloudOff, c.danger)
             }
-            Row(Modifier.fillMaxWidth().tappable { scope.launch { session.sync.retryNow() } }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth().tappable { scope.launch { retrySync(session.sync) } }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(icon, tint, size = 20.dp)
                 Column(Modifier.weight(1f)) {
                     Txt(title, size = T.Body, weight = Semibold)
                     Mute(detail, size = T.Caption, maxLines = 2)
                 }
                 if (sync.state == SyncState.Error) Icon(Icons.Refresh, c.mute, size = 18.dp)
+            }
+            // Local writes failing (disk full): sync can look fine while nothing reaches this phone's storage.
+            writeError?.let { message ->
+                Divider(inset = 16.dp)
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(Icons.CloudOff, c.danger, size = 20.dp)
+                    Column(Modifier.weight(1f)) {
+                        Txt(message, size = T.Body, weight = Semibold)
+                        Mute("Free up some storage. Volum keeps trying in the meantime.", size = T.Caption, maxLines = 2)
+                    }
+                }
             }
             Divider(inset = 16.dp)
             Row(Modifier.fillMaxWidth().tappable { signOut = true }.padding(horizontal = 16.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -167,10 +208,6 @@ fun ProfileScreen() {
         Spacer(Modifier.height(LocalDockPadding.current + 24.dp))
     }
 
-    var draft by remember { mutableStateOf(name) }
-    var nameError by remember { mutableStateOf<String?>(null) }
-    // Each opening starts from the current name, not a cancelled draft or an old error.
-    LaunchedEffect(editName) { if (editName) { draft = name; nameError = null } }
     BottomSheet(open = editName, onDismiss = { editName = false }, title = "Display name") {
         Txt("Display name", Modifier.padding(horizontal = 6.dp), size = T.SheetTitle, weight = ExtraBold)
         Mute("Your partner sees this name.", Modifier.padding(horizontal = 6.dp))
@@ -183,7 +220,9 @@ fun ProfileScreen() {
         PrimaryButton("Save", enabled = draft.isNotBlank()) {
             scope.launch {
                 try { app.setDisplayName(draft.trim()); editName = false; nameError = null }
-                catch (e: PbException) { nameError = if (e.status == 0) "You're offline." else e.message }
+                catch (e: CancellationException) { throw e }
+                catch (e: PbException) { nameError = if (e.status == 0) "You're offline." else e.fieldMessage ?: "Couldn't save your name. Try again." }
+                catch (e: Exception) { nameError = "Couldn't save your name. Try again." }
             }
         }
     }
@@ -192,7 +231,7 @@ fun ProfileScreen() {
         title = "Unpair from ${partner?.displayName ?: "partner"}?",
         message = "You'll stop seeing each other's routines, lifts and live workouts.",
         confirm = "Unpair",
-        onConfirm = { scope.launch { runCatching { session.partner.unpair(); session.repository.deletePartnerLocalData() } } },
+        onConfirm = ::unpairPartner,
         onDismiss = { unpair = false },
     )
     ConfirmSheet(
@@ -206,6 +245,24 @@ fun ProfileScreen() {
 }
 
 private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
+
+/** The sync error line, from the kind of failure rather than the raw exception or server message. */
+private fun syncErrorDetail(problem: SyncProblem?): String = when (problem) {
+    null -> "Tap to retry"
+    SyncProblem.SessionExpired -> "Session expired — sign in again"
+    SyncProblem.Rejected -> "Some changes couldn't be saved to your account. Tap to retry."
+    SyncProblem.Failed -> "Couldn't sync with your account. Tap to retry."
+}
+
+private suspend fun retrySync(sync: dev.southstar21.volum.data.SyncEngine) {
+    try {
+        sync.retryNow()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        // The status row already shows the failure; a second tap tries again.
+    }
+}
 
 @Composable
 private fun Label(text: String) = Mute(text, Modifier.padding(start = 22.dp, top = 18.dp, bottom = 8.dp), size = T.Small, weight = Bold)
@@ -233,7 +290,11 @@ fun PairPartnerScreen() {
     fun run(block: suspend () -> Unit) {
         busy = true; error = null; message = null
         scope.launch {
-            try { block() } catch (e: PbException) { error = partnerErrorMessage(e) } finally { busy = false }
+            try { block() }
+            catch (e: CancellationException) { throw e }
+            catch (e: PbException) { error = partnerErrorMessage(e) }
+            catch (e: Exception) { error = "Something went wrong" }
+            finally { busy = false }
         }
     }
 

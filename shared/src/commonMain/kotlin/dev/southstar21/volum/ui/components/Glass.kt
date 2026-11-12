@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.addOutline
 import androidx.compose.ui.graphics.drawOutline
@@ -42,6 +43,7 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.runtime.Stable
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -53,7 +55,6 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.drawWithCache
 import com.kyant.backdrop.drawPlainBackdrop
 import com.kyant.backdrop.Backdrop
@@ -73,7 +74,6 @@ import dev.southstar21.volum.ui.theme.riseIn
 import dev.southstar21.volum.ui.theme.VolumColors
 import kotlin.math.PI
 import kotlin.math.cos
-import kotlin.math.max
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -93,7 +93,7 @@ fun GlassRoot(solid: Boolean, modifier: Modifier = Modifier, content: @Composabl
     val fieldBackdrop = remember(field, colors) { FieldBackdrop(field, colors) }
     CompositionLocalProvider(LocalBackdrop provides backdrop, LocalField provides field, LocalFieldBackdrop provides fieldBackdrop) {
         Box(modifier.fillMaxSize().onSizeChanged { field.size = it }.onGloballyPositioned { field.coordinates = it }) {
-            Box(Modifier.fillMaxSize().layerBackdrop(backdrop).drawBehind { drawField(colors, solid) })
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop).drawBehind { drawField(field, colors, solid, size.width, size.height) })
             content()
         }
     }
@@ -106,6 +106,57 @@ class FieldInfo {
     var solid by mutableStateOf(false)
     /** Where the field sits, for glass that draws its own slice of it (not state: read only while drawing). */
     var coordinates: androidx.compose.ui.layout.LayoutCoordinates? = null
+
+    /**
+     * The field's gradients, kept for the last size and colours they were made for: the field is drawn
+     * on every frame by each strip and card that repaints its slice of it, and they only change with
+     * those. Not state: read only while drawing.
+     */
+    private var cached: FieldBrushes? = null
+
+    internal fun brushes(c: VolumColors, w: Float, h: Float): FieldBrushes {
+        cached?.let { if (it.colors == c && it.size.width == w && it.size.height == h) return it }
+        return FieldBrushes(c, w, h).also { cached = it }
+    }
+}
+
+/** The non-solid field's linear gradient and light pools at one size. */
+internal class FieldBrushes(val colors: VolumColors, w: Float, h: Float) {
+    val size = Size(w, h)
+    val linear: Brush
+    val glows: List<FieldGlow>
+
+    init {
+        // CSS linear-gradient(165deg, top 0%, mid 48%, bottom 100%).
+        val angle = 165.0 * PI / 180
+        val dx = sin(angle).toFloat()
+        val dy = -cos(angle).toFloat()
+        val half = (kotlin.math.abs(w * dx) + kotlin.math.abs(h * dy)) / 2
+        val center = Offset(w / 2, h / 2)
+        linear = Brush.linearGradient(
+            0f to colors.baseTop, 0.48f to colors.baseMid, 1f to colors.baseBottom,
+            start = center - Offset(dx * half, dy * half),
+            end = center + Offset(dx * half, dy * half),
+        )
+        val p3 = Offset(0.18f * w, 0.16f * h)
+        val p4 = Offset(0.78f * w, 0.58f * h)
+        glows = listOfNotNull(
+            fieldGlow(colors.glow1, Offset(0.96f * w, 0f), 1.05f * w, 0.32f * h, 1f),
+            fieldGlow(colors.glow2, Offset(0f, 0.80f * h), 0.90f * w, 0.28f * h, 1f),
+            fieldGlow(colors.glow3, p3, farthest(p3, w, h), farthest(p3, w, h), 0.40f),
+            fieldGlow(colors.glow4, p4, farthest(p4, w, h), farthest(p4, w, h), 0.44f),
+        )
+    }
+}
+
+/** A radial glow drawn as a circle of [radius] squashed vertically by [squash] about its centre. */
+internal class FieldGlow(val brush: Brush, val center: Offset, val radius: Float, val squash: Float)
+
+/** [color] at the centre fading to clear at [stop] of the ellipse's radii; none for an empty ellipse. */
+private fun fieldGlow(color: Color, center: Offset, rx: Float, ry: Float, stop: Float): FieldGlow? {
+    if (rx <= 0f || ry <= 0f) return null
+    val brush = Brush.radialGradient(0f to color, stop to color.copy(alpha = 0f), 1f to Color.Transparent, center = center, radius = rx)
+    return FieldGlow(brush, center, rx, ry / rx)
 }
 
 val LocalField = staticCompositionLocalOf { FieldInfo() }
@@ -137,18 +188,20 @@ fun EdgeBlur(content: Backdrop, top: Boolean, height: Dp, solid: Dp, modifier: M
             .height(height)
             .onGloballyPositioned { placed.coordinates = it; y = it.positionInRoot().y }
             .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-            .drawWithContent {
-                val fs = field.size
-                val at = placed.coordinates?.takeIf { it.isAttached }?.positionInRoot()?.y ?: y
-                if (fs.width > 0) translate(0f, -at) { drawField(c, field.solid, fs.width.toFloat(), fs.height.toFloat()) }
-                drawContent()
-                val keep = (solid.toPx() / size.height).coerceIn(0f, 1f)
+            .drawWithCache {
+                val keep = if (size.height > 0f) (solid.toPx() / size.height).coerceIn(0f, 1f) else 1f
                 val mask = if (top) {
                     Brush.verticalGradient(0f to Color.Black, keep to Color.Black, 1f to Color.Transparent)
                 } else {
                     Brush.verticalGradient(0f to Color.Transparent, (1f - keep) to Color.Black, 1f to Color.Black)
                 }
-                drawRect(mask, blendMode = BlendMode.DstIn)
+                onDrawWithContent {
+                    val fs = field.size
+                    val at = placed.coordinates?.takeIf { it.isAttached }?.positionInRoot()?.y ?: y
+                    if (fs.width > 0) translate(0f, -at) { drawField(field, c, field.solid, fs.width.toFloat(), fs.height.toFloat()) }
+                    drawContent()
+                    drawRect(mask, blendMode = BlendMode.DstIn)
+                }
             }
             .then(
                 if (blur) Modifier.drawPlainBackdrop(
@@ -160,34 +213,17 @@ fun EdgeBlur(content: Backdrop, top: Boolean, height: Dp, solid: Dp, modifier: M
     )
 }
 
-private fun DrawScope.drawField(c: VolumColors, solid: Boolean) = drawField(c, solid, size.width, size.height)
-
-private fun DrawScope.drawField(c: VolumColors, solid: Boolean, w: Float, h: Float, filter: ColorFilter? = null) {
+private fun DrawScope.drawField(field: FieldInfo, c: VolumColors, solid: Boolean, w: Float, h: Float, filter: ColorFilter? = null) {
     if (solid) {
         drawRect(c.baseMid, size = Size(w, h), colorFilter = filter)
         return
     }
-    // CSS linear-gradient(165deg, top 0%, mid 48%, bottom 100%).
-    val angle = 165.0 * PI / 180
-    val dx = sin(angle).toFloat()
-    val dy = -cos(angle).toFloat()
-    val half = (kotlin.math.abs(w * dx) + kotlin.math.abs(h * dy)) / 2
-    val center = Offset(w / 2, h / 2)
-    drawRect(
-        Brush.linearGradient(
-            0f to c.baseTop, 0.48f to c.baseMid, 1f to c.baseBottom,
-            start = center - Offset(dx * half, dy * half),
-            end = center + Offset(dx * half, dy * half),
-        ),
-        size = Size(w, h),
-        colorFilter = filter,
-    )
-    ellipseGlow(c.glow1, Offset(0.96f * w, 0f), 1.05f * w, 0.32f * h, 1f, filter)
-    ellipseGlow(c.glow2, Offset(0f, 0.80f * h), 0.90f * w, 0.28f * h, 1f, filter)
-    val p3 = Offset(0.18f * w, 0.16f * h)
-    ellipseGlow(c.glow3, p3, farthest(p3, w, h), farthest(p3, w, h), 0.40f, filter)
-    val p4 = Offset(0.78f * w, 0.58f * h)
-    ellipseGlow(c.glow4, p4, farthest(p4, w, h), farthest(p4, w, h), 0.44f, filter)
+    val b = field.brushes(c, w, h)
+    drawRect(b.linear, size = b.size, colorFilter = filter)
+    for (g in b.glows) {
+        // An ellipse: a circle squashed vertically about its centre.
+        scale(1f, g.squash, pivot = g.center) { drawCircle(g.brush, radius = g.radius, center = g.center, colorFilter = filter) }
+    }
 }
 
 /** The field backdrop drawn directly, for glass that only needs its colour (see [FieldBackdrop]). */
@@ -238,25 +274,12 @@ private class FieldBackdrop(private val field: FieldInfo, private val colors: Vo
         } else {
             Offset.Zero
         }
-        translate(-offset.x, -offset.y) { drawField(colors, field.solid, fs.width.toFloat(), fs.height.toFloat(), Vibrancy) }
+        translate(-offset.x, -offset.y) { drawField(field, colors, field.solid, fs.width.toFloat(), fs.height.toFloat(), Vibrancy) }
     }
 }
 
 private fun farthest(p: Offset, w: Float, h: Float): Float =
     listOf(Offset(0f, 0f), Offset(w, 0f), Offset(0f, h), Offset(w, h)).maxOf { sqrt((it.x - p.x) * (it.x - p.x) + (it.y - p.y) * (it.y - p.y)) }
-
-/** A radial glow, [color] at the centre fading to clear at [stop] of the ellipse's radii. */
-private fun DrawScope.ellipseGlow(color: Color, center: Offset, rx: Float, ry: Float, stop: Float, filter: ColorFilter? = null) {
-    if (rx <= 0f || ry <= 0f) return
-    scale(1f, ry / rx, pivot = center) {
-        drawCircle(
-            Brush.radialGradient(0f to color, stop to color.copy(alpha = 0f), 1f to Color.Transparent, center = center, radius = rx),
-            radius = rx,
-            center = center,
-            colorFilter = filter,
-        )
-    }
-}
 
 /**
  * Clear glass for cards: refracts the field at its edges, with a bright top rim. Inside a sheet or
@@ -411,6 +434,67 @@ fun DrawScope.liquidRim(shape: Shape, c: VolumColors) {
     )
 }
 
+/**
+ * A liquid pane's paint for [dev.southstar21.volum.ui.liquid.LiquidTabs]' `surface`: the liquid fill,
+ * then [liquidSheen] and [liquidRim]. The surface is drawn on every frame the tabs move or swell, so its
+ * path, outline and brushes are kept and only rebuilt when the size, shape or density changes.
+ */
+@Composable
+fun rememberLiquidPane(): DrawScope.(Shape) -> Unit {
+    val c = Volum.colors
+    return remember(c) {
+        val pane = LiquidPane(c)
+        val draw: DrawScope.(Shape) -> Unit = { shape -> pane.draw(this, shape) }
+        draw
+    }
+}
+
+private class LiquidPane(private val c: VolumColors) {
+    private val fill = Brush.verticalGradient(listOf(c.liquidTop, c.liquidBottom))
+    private val rimBrush = Brush.verticalGradient(listOf(c.spec, c.liquidRim))
+    private var shape: Shape? = null
+    private var size = Size.Unspecified
+    private var layoutDirection: LayoutDirection? = null
+    private var density = 0f
+    private val clip = Path()
+    private var outline: Outline? = null
+    private var glow: Brush = fill
+    private var glowHeight = 0f
+    private var spec: Brush = fill
+    private var specHeight = 0f
+    private var rim = Stroke()
+
+    fun draw(scope: DrawScope, shape: Shape) = with(scope) {
+        if (shape != this@LiquidPane.shape || size != this@LiquidPane.size || layoutDirection != this@LiquidPane.layoutDirection || density != this@LiquidPane.density) {
+            build(this, shape)
+        }
+        val outline = this@LiquidPane.outline ?: return@with
+        drawRect(fill)
+        clipPath(clip) {
+            drawRect(glow, topLeft = Offset(0f, size.height - glowHeight), size = Size(size.width, glowHeight))
+            drawRect(spec, size = Size(size.width, specHeight))
+        }
+        drawOutline(outline, rimBrush, style = rim)
+    }
+
+    /** As [liquidSheen] and [liquidRim] draw it. */
+    private fun build(scope: DrawScope, shape: Shape) = with(scope) {
+        this@LiquidPane.shape = shape
+        this@LiquidPane.size = size
+        this@LiquidPane.layoutDirection = layoutDirection
+        this@LiquidPane.density = density
+        val outline = shape.createOutline(size, layoutDirection, this)
+        this@LiquidPane.outline = outline
+        clip.reset()
+        clip.addOutline(outline)
+        glowHeight = 10.dp.toPx().coerceAtMost(size.height / 2)
+        glow = Brush.verticalGradient(0f to Color.Transparent, 0.55f to Color.White.copy(alpha = 0.10f), 1f to Color.White.copy(alpha = 0.20f), startY = size.height - glowHeight, endY = size.height)
+        specHeight = 2.5.dp.toPx()
+        spec = Brush.verticalGradient(0f to c.spec, 1f to Color.Transparent, startY = 0f, endY = specHeight)
+        rim = Stroke(width = 2.dp.toPx())
+    }
+}
+
 @Composable
 private fun Modifier.fieldLiquid(shape: Shape, tint: Color?): Modifier {
     val c = Volum.colors
@@ -545,9 +629,6 @@ fun Modifier.neuOut(shape: Shape): Modifier {
         .outerShadow(shape, Shadow(radius = 20.dp, color = c.neuLight, offset = DpOffset((-9).dp, (-9).dp)))
         .background(c.neuBg, shape)
 }
-
-@Suppress("unused")
-private fun keepMax(a: Float, b: Float) = max(a, b)
 
 /**
  * Whether glass refracts and blurs what's behind it (the backdrop library's render effects) or takes

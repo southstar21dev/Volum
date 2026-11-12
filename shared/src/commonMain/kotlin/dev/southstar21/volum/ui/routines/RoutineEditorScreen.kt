@@ -1,5 +1,6 @@
 package dev.southstar21.volum.ui.routines
 
+import dev.southstar21.volum.data.MAX_ROUTINE_NAME
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.animate
@@ -47,7 +48,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -74,12 +74,13 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-import dev.southstar21.volum.data.lastTopSetLabel
 import dev.southstar21.volum.model.RoutineItem
 import dev.southstar21.volum.ui.LocalNav
 import dev.southstar21.volum.ui.LocalSession
 import dev.southstar21.volum.ui.exercisesState
+import dev.southstar21.volum.ui.lastTopSetLabels
 import dev.southstar21.volum.ui.routinesState
+import dev.southstar21.volum.ui.components.BackHandler
 import dev.southstar21.volum.ui.components.BareField
 import dev.southstar21.volum.ui.components.CircleButton
 import dev.southstar21.volum.ui.components.ConfirmSheet
@@ -122,9 +123,12 @@ fun RoutineEditorScreen(routineId: String?) {
     var name by rememberSaveable { mutableStateOf(existing?.name ?: "") }
     val items = rememberSaveable(saver = RoutineItemsSaver) { mutableStateListOf<RoutineItem>().apply { addAll(existing?.items.orEmpty()) } }
     var expanded by rememberSaveable { mutableStateOf(items.firstOrNull()?.id) }
-    var addOpen by remember { mutableStateOf(false) }
-    var deletePrompt by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var addOpen by rememberSaveable { mutableStateOf(false) }
+    var deletePrompt by rememberSaveable { mutableStateOf(false) }
+    var discardPrompt by rememberSaveable { mutableStateOf(false) }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    var leaving by remember { mutableStateOf(false) }
     val reorder = remember { Reorder(scope) }
     // Rows that arrive while the screen is open (picked from the sheet) grow in; the routine's own
     // rows are there from the start and rise in with the screen instead.
@@ -135,14 +139,32 @@ fun RoutineEditorScreen(routineId: String?) {
         rowStates[id]?.targetState = false
     }
 
+    // A removed row stays in [items] until it has folded away; it is already gone from the routine.
+    fun kept(): List<RoutineItem> = items.filter { rowStates[it.id]?.targetState != false }
+
     fun save() {
+        if (saving) return
+        val toSave = kept()
         if (name.isBlank()) { error = "Give the routine a name."; return }
-        if (items.isEmpty()) { error = "Add at least one exercise."; return }
+        if (toSave.isEmpty()) { error = "Add at least one exercise."; return }
+        // Single-shot: a second tap while the screen leaves would save a new routine twice.
+        saving = true
         scope.launch {
-            session.repository.saveRoutine(existing?.id, name.trim(), items.toList())
+            var saved = false
+            try {
+                session.repository.saveRoutine(existing?.id, name.trim(), toSave)
+                saved = true
+            } finally {
+                if (!saved) saving = false
+            }
             nav.pop()
         }
     }
+
+    // Cancel, back and the edge swipe ask before dropping unsaved edits.
+    val dirty = !saving && !leaving && (name.trim() != (existing?.name ?: "") || kept() != existing?.items.orEmpty())
+    fun close() { if (dirty) discardPrompt = true else nav.pop() }
+    BackHandler(enabled = dirty) { discardPrompt = true }
 
     val library = remember(exercises) { exercises.values.filter { !it.deleted } }
     fun move(id: String, by: Int) {
@@ -157,13 +179,13 @@ fun RoutineEditorScreen(routineId: String?) {
     Column(Modifier.fillMaxSize().imePadding().onGloballyPositioned { viewport = it }.verticalScroll(scrollState)) {
         TopInset(10.dp)
         Toolbar(
-            leading = { CircleButton(Icons.X, "Cancel") { nav.pop() } },
+            leading = { CircleButton(Icons.X, "Cancel") { close() } },
             center = { Txt(if (existing == null) "New routine" else "Edit routine", size = T.Subhead, weight = Bold) },
             trailing = { dev.southstar21.volum.ui.components.PrimaryButton("Save", Modifier.width(84.dp), height = 44.dp) { save() } },
         )
         Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp).riseIn().fillMaxWidth().glassCard(RoundedCornerShape(24.dp)).padding(horizontal = 18.dp, vertical = 12.dp)) {
             Mute("Routine name", Modifier.clearAndSetSemantics {}, size = T.Caption)
-            BareField(name, { name = it; error = null }, Modifier.fillMaxWidth(), placeholder = "Push A", size = T.Heading, weight = ExtraBold, imeAction = ImeAction.Done, label = "Routine name")
+            BareField(name, { name = it.take(MAX_ROUTINE_NAME); error = null }, Modifier.fillMaxWidth(), placeholder = "Push A", size = T.Heading, weight = ExtraBold, imeAction = ImeAction.Done, label = "Routine name")
         }
         AnimatedVisibility(error != null, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
             var shown by remember { mutableStateOf("") }
@@ -282,7 +304,7 @@ fun RoutineEditorScreen(routineId: String?) {
                         ) {
                             Column(Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 StepperRow("Sets", item.targetSets, 1, 20) { v -> update { it.copy(targetSets = v) } }
-                                StepperRow(if (timed) "Seconds" else "Reps", item.targetReps, 1, if (timed) 600 else 100, step = if (timed) 5 else 1) { v -> update { it.copy(targetReps = v) } }
+                                StepperRow(if (timed) "Seconds" else "Reps", item.targetReps, if (timed) 5 else 1, if (timed) 600 else 100, step = if (timed) 5 else 1) { v -> update { it.copy(targetReps = v) } }
                                 Box(Modifier.fillMaxWidth().glassCard(RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 12.dp)) {
                                     BareField(item.note.orEmpty(), { text -> update { it.copy(note = text.ifEmpty { null }) } }, Modifier.fillMaxWidth(), placeholder = "Note", size = T.Label, weight = androidx.compose.ui.text.font.FontWeight.Normal, label = "Note for ${item.name}")
                                 }
@@ -322,7 +344,7 @@ fun RoutineEditorScreen(routineId: String?) {
         open = addOpen,
         exercises = library,
         recent = emptyList(),
-        lastLabels = remember(library) { library.associate { ex -> ex.id to session.repository.lastEntryFor(ex.id)?.let { lastTopSetLabel(it.sets, ex.isTimed) } }.filterValues { it != null }.mapValues { it.value!! } },
+        lastLabels = remember(library) { session.lastTopSetLabels(library) },
         onPick = { ex ->
             val item = RoutineItem(newId(), ex.id, ex.name, 3, if (ex.isTimed) 30 else 8)
             items.add(item)
@@ -343,8 +365,16 @@ fun RoutineEditorScreen(routineId: String?) {
         title = "Delete ${existing?.name ?: "routine"}?",
         message = "Your workout history stays.",
         confirm = "Delete routine",
-        onConfirm = { existing?.let { r -> scope.launch { session.repository.deleteRoutine(r.id); nav.pop() } } },
+        onConfirm = { existing?.let { r -> leaving = true; scope.launch { session.repository.deleteRoutine(r.id); nav.pop() } } },
         onDismiss = { deletePrompt = false },
+    )
+    ConfirmSheet(
+        open = discardPrompt,
+        title = if (existing == null) "Discard this routine?" else "Discard your changes?",
+        message = if (existing == null) "It hasn't been saved." else "Your edits to ${existing.name} won't be saved.",
+        confirm = if (existing == null) "Discard routine" else "Discard changes",
+        onConfirm = { leaving = true; nav.pop() },
+        onDismiss = { discardPrompt = false },
     )
 }
 
@@ -455,12 +485,19 @@ private val RoutineItemsSaver = Saver<SnapshotStateList<RoutineItem>, String>(
     restore = { saved -> mutableStateListOf<RoutineItem>().apply { addAll(VolumJson.decodeFromString(ListSerializer(RoutineItem.serializer()), saved)) } },
 )
 
+/** The stepper's next value down: the grid line of [step] below [value] (32 → 30 for 5), within [min]..[max]. */
+internal fun stepDown(value: Int, step: Int, min: Int, max: Int): Int = ((value - 1) / step * step).coerceIn(min, max)
+
+/** The stepper's next value up: the grid line of [step] above [value] (32 → 35 for 5), within [min]..[max]. */
+internal fun stepUp(value: Int, step: Int, min: Int, max: Int): Int = ((value / step + 1) * step).coerceIn(min, max)
+
+/** Steps along multiples of [step], so a value off the grid (from before, or another device) snaps onto it. */
 @Composable
 private fun StepperRow(label: String, value: Int, min: Int, max: Int, step: Int = 1, onChange: (Int) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Txt(label, Modifier.weight(1f), size = T.Body, weight = Bold)
-        CircleButton(Icons.Minus, "Fewer $label".lowercase(), enabled = value > min) { onChange((value - step).coerceAtLeast(min)) }
+        CircleButton(Icons.Minus, "Fewer $label".lowercase(), enabled = value > min, repeatable = true) { onChange(stepDown(value, step, min, max)) }
         Txt("$value", Modifier.width(48.dp), size = T.SheetTitle, weight = ExtraBold, tabular = true, align = androidx.compose.ui.text.style.TextAlign.Center)
-        CircleButton(Icons.Plus, "More $label".lowercase(), enabled = value < max) { onChange((value + step).coerceAtMost(max)) }
+        CircleButton(Icons.Plus, "More $label".lowercase(), enabled = value < max, repeatable = true) { onChange(stepUp(value, step, min, max)) }
     }
 }

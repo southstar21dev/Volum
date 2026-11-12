@@ -5,7 +5,6 @@ import dev.southstar21.volum.platform.hapticTick
 import dev.southstar21.volum.ui.liquid.LiquidTabs
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,7 +14,6 @@ import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -28,7 +26,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -54,17 +51,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.CompositionLocalContext
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.currentCompositionLocalContext
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.dismiss
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.paneTitle
@@ -73,6 +74,7 @@ import dev.southstar21.volum.ui.theme.Durations
 import dev.southstar21.volum.ui.theme.Easings
 import dev.southstar21.volum.ui.theme.Springs
 import dev.southstar21.volum.ui.theme.LocalEntrance
+import dev.southstar21.volum.ui.theme.LocalReduceMotion
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
@@ -82,12 +84,12 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -96,7 +98,6 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -107,15 +108,15 @@ import androidx.navigationevent.compose.rememberNavigationEventState
 import dev.southstar21.volum.ui.theme.Bold
 import dev.southstar21.volum.ui.theme.ExtraBold
 import dev.southstar21.volum.ui.theme.Icon
-import dev.southstar21.volum.ui.theme.Icons
 import dev.southstar21.volum.ui.theme.Semibold
 import dev.southstar21.volum.ui.theme.T
 import dev.southstar21.volum.ui.theme.Volum
 import dev.southstar21.volum.ui.theme.tappable
 import dev.southstar21.volum.ui.theme.riseIn
 import dev.southstar21.volum.ui.theme.textStyle
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
+import kotlinx.coroutines.withTimeoutOrNull
 
 // ---- Text -----------------------------------------------------------------------------------
 
@@ -170,7 +171,6 @@ fun NumberUnit(value: String, unit: String, modifier: Modifier = Modifier, size:
 // ---- Surfaces -------------------------------------------------------------------------------
 
 val CardShape = RoundedCornerShape(28.dp)
-val RowShape = RoundedCornerShape(20.dp)
 
 @Composable
 fun GlassCard(
@@ -201,12 +201,14 @@ fun CircleButton(
     accent: Boolean = false,
     enabled: Boolean = true,
     iconModifier: Modifier = Modifier,
+    /** Meant to be tapped quickly in a row (a stepper): every tap counts, none is taken for a double tap. */
+    repeatable: Boolean = false,
     onClick: () -> Unit,
 ) {
     Box(
         modifier
             .size(size)
-            .tappable(enabled = enabled, haptic = accent, onClick = onClick)
+            .tappable(enabled = enabled, haptic = accent, debounce = !repeatable, onClick = onClick)
             .then(if (accent) Modifier.accentGel(CircleShape) else Modifier.liquidGlass(CircleShape))
             .semantics { contentDescription?.let { this.contentDescription = it } },
         contentAlignment = Alignment.Center,
@@ -248,19 +250,28 @@ fun GlassButton(text: String, modifier: Modifier = Modifier, height: Dp = 52.dp,
 
 @Composable
 fun TextButton(text: String, modifier: Modifier = Modifier, color: Color = Volum.colors.accent, size: TextUnit = T.Body, onClick: () -> Unit) {
-    Box(modifier.tappable(onClick = onClick).padding(horizontal = 6.dp, vertical = 10.dp)) {
+    // At least 48dp tall, the minimum touch target, however small the text.
+    Box(modifier.heightIn(min = 48.dp).tappable(onClick = onClick).padding(horizontal = 6.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
         Txt(text, size = size, weight = Bold, color = color)
     }
 }
 
 /** A small glass pill: chips, the timer, labels on toolbars. */
 @Composable
-fun Pill(modifier: Modifier = Modifier, height: Dp = 44.dp, selected: Boolean = false, onClick: (() -> Unit)? = null, content: @Composable RowScope.() -> Unit) {
+fun Pill(
+    modifier: Modifier = Modifier,
+    height: Dp = 44.dp,
+    selected: Boolean = false,
+    /** False for an action two quick taps should do twice (adding a set), not once. */
+    debounce: Boolean = true,
+    onClick: (() -> Unit)? = null,
+    content: @Composable RowScope.() -> Unit,
+) {
     val shape = RoundedCornerShape(height / 2)
     Row(
         modifier
             .height(height)
-            .then(if (onClick != null) Modifier.tappable(onClick = onClick).semantics { this.selected = selected } else Modifier)
+            .then(if (onClick != null) Modifier.tappable(debounce = debounce, onClick = onClick).semantics { this.selected = selected } else Modifier)
             .then(if (selected) Modifier.accentGel(shape) else Modifier.liquidGlass(shape))
             .padding(horizontal = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -291,6 +302,7 @@ fun Spinner(color: Color, modifier: Modifier = Modifier, size: Dp = 22.dp) {
  */
 @Composable
 fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier, height: Dp = 38.dp, fill: Boolean = false) {
+    if (options.isEmpty()) return
     val c = Volum.colors
     nativeSegmented?.let { native ->
         native(options, selected, onSelect, modifier, fill)
@@ -303,6 +315,7 @@ fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, mod
     val segment = remember(options, style, density) {
         with(density) { options.maxOf { measurer.measure(it, style).size.width }.toDp() } + 28.dp
     }
+    val pane = rememberLiquidPane()
     LiquidTabs(
         count = options.size,
         selectedIndex = selected,
@@ -313,14 +326,11 @@ fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, mod
         container = Color.White.copy(alpha = 0.66f),
         selection = c.soft,
         modifier = modifier.then(if (fill) Modifier.fillMaxWidth() else Modifier.width(segment * options.size + 8.dp)),
-        height = height + 8.dp,
+        // The pane is at least 48dp tall, the minimum touch target, whatever [height] the labels get.
+        height = maxOf(height + 8.dp, 48.dp),
         frosted = !glassEffects(),
         nested = LocalInGlass.current,
-        surface = { shape ->
-            drawRect(Brush.verticalGradient(listOf(c.liquidTop, c.liquidBottom)))
-            liquidSheen(shape, c)
-            liquidRim(shape, c)
-        },
+        surface = pane,
         onCross = { hapticTick() },
     ) { index, tinted ->
         Txt(options[index], size = T.Small, weight = if (tinted) ExtraBold else Semibold, color = if (tinted) c.accent else c.ink, maxLines = 1)
@@ -366,7 +376,8 @@ fun BareField(
         keyboardActions = if (onDone == null) KeyboardActions.Default else KeyboardActions(onDone = { onDone() }, onGo = { onDone() }, onSearch = { onDone() }, onSend = { onDone() }),
         decorationBox = { inner ->
             Box(contentAlignment = if (align == TextAlign.Center) Alignment.Center else Alignment.CenterStart) {
-                if (value.isEmpty()) BasicText(placeholder, style = style.copy(color = c.mute.copy(alpha = 0.7f)))
+                // The full mute colour: any lighter falls under 4.5:1 on the field and milky surfaces.
+                if (value.isEmpty()) BasicText(placeholder, style = style.copy(color = c.mute))
                 inner()
             }
         },
@@ -473,7 +484,8 @@ fun BackHandler(enabled: Boolean = true, onBack: () -> Unit) {
 
 /**
  * A glass bottom sheet over a scrim. Stays composed while it animates out; drag the sheet down or tap
- * the scrim to dismiss. [fill] makes it tall (search sheets).
+ * the scrim to dismiss, or (for screen readers) activate the grabber. [fill] makes it tall (search
+ * sheets). Once [open] turns false it takes no more input, so nothing on it runs twice while it leaves.
  */
 @Composable
 fun BottomSheet(open: Boolean, onDismiss: () -> Unit, modifier: Modifier = Modifier, fill: Boolean = false, title: String? = null, content: @Composable ColumnScope.() -> Unit) {
@@ -481,11 +493,13 @@ fun BottomSheet(open: Boolean, onDismiss: () -> Unit, modifier: Modifier = Modif
     val drag = remember { Animatable(0f) }
     val isOpen by rememberUpdatedState(open)
     var mounted by remember { mutableStateOf(open) }
+    // With reduced motion the sheet fades in and out where it rests instead of sliding.
+    val reduce = LocalReduceMotion.current
     LaunchedEffect(open) {
         if (open) {
             mounted = true
             drag.snapTo(0f) // a drag-dismissed sheet keeps its offset while it slides out
-            progress.animateTo(1f, Springs.sheet())
+            progress.animateTo(1f, if (reduce) tween<Float>(Durations.Fade, easing = Easings.Enter) else Springs.sheet<Float>())
         } else {
             progress.animateTo(0f, tween(Durations.Fade, easing = Easings.Exit))
             mounted = false
@@ -495,14 +509,17 @@ fun BottomSheet(open: Boolean, onDismiss: () -> Unit, modifier: Modifier = Modif
     val c = Volum.colors
     val scope = rememberCoroutineScope()
     var height by remember { mutableIntStateOf(1) }
+    val flick = with(LocalDensity.current) { FlickVelocity.toPx() }
+    // A fresh one each time the sheet opens: its actions run once per opening (see [sheetAction]).
+    val once = remember(open) { SheetOnce() }
     Overlay {
         BackHandler(open) { onDismiss() }
         Box(Modifier.fillMaxSize()) {
             Box(
                 // Faded in the layer, so the animation redraws the scrim without recomposing the sheet.
-                // Screen readers dismiss with the sheet's own buttons or back, not this backdrop.
+                // Screen readers dismiss with the sheet's grabber, its own buttons or back, not this backdrop.
                 Modifier.fillMaxSize().graphicsLayer { alpha = progress.value }.background(c.scrim)
-                    .tappable(role = null, highlight = false) { onDismiss() }
+                    .tappable(role = null, highlight = false, debounce = false) { onDismiss() }
                     .clearAndSetSemantics {},
             )
             Column(
@@ -515,39 +532,86 @@ fun BottomSheet(open: Boolean, onDismiss: () -> Unit, modifier: Modifier = Modif
                     .then(if (fill) Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(top = 40.dp).fillMaxSize() else Modifier)
                     .onSizeChanged { height = it.height }
                     // Moved in the layer, not by offset: sliding redraws the sheet without re-laying it out.
-                    .graphicsLayer { translationY = (1f - progress.value) * (height + 40) + drag.value }
+                    .graphicsLayer {
+                        translationY = (if (reduce) 0f else (1f - progress.value) * (height + 40)) + drag.value
+                        if (reduce) alpha = progress.value
+                    }
                     // The drag also keeps taps on the sheet from reaching the scrim under it.
                     .draggable(
                         rememberDraggableState { d -> scope.launch { drag.snapTo((drag.value + d).coerceAtLeast(0f)) } },
                         Orientation.Vertical,
                         onDragStopped = { v ->
-                            if (drag.value > height * 0.25f || v > 1200f) {
+                            if (drag.value > height * 0.25f || v > flick) {
                                 // Don't spring back: the exit slides the sheet on down from where it
-                                // was let go. Only if the dismiss was refused does it return.
+                                // was let go. Only if the dismiss was refused does it return; a caller
+                                // that closes from a coroutine gets a moment to do so first.
                                 onDismiss()
-                                withFrameNanos {}
-                                if (!isOpen) return@draggable
+                                val closed = withTimeoutOrNull(Durations.Fade.toLong()) { snapshotFlow { isOpen }.first { !it } }
+                                if (closed != null) return@draggable
                             }
-                            drag.animateTo(0f, Springs.snapBack())
+                            if (reduce) drag.snapTo(0f) else drag.animateTo(0f, Springs.snapBack())
                         },
                     )
                     .sheetGlass(RoundedCornerShape(40.dp))
+                    // Leaving: hidden from screen readers too, so nothing on it can be activated again.
+                    .then(if (open) Modifier else Modifier.clearAndSetSemantics {})
                     .semantics {
                         isTraversalGroup = true
                         title?.let { paneTitle = it }
+                        dismiss { onDismiss(); true }
                     }
                     .padding(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 22.dp),
             ) {
-                Box(Modifier.align(Alignment.CenterHorizontally).width(40.dp).height(5.dp).clip(CircleShape).background(c.line))
+                Box(
+                    Modifier.align(Alignment.CenterHorizontally).width(40.dp).height(5.dp).clip(CircleShape).background(c.line)
+                        // How a screen reader closes a sheet with no button of its own: VoiceOver has no back.
+                        .semantics {
+                            contentDescription = "Close"
+                            role = Role.Button
+                            onClick(label = "Close") { onDismiss(); true }
+                        },
+                )
                 Spacer(Modifier.height(14.dp))
                 val still by remember { androidx.compose.runtime.derivedStateOf { open && progress.value == 1f && drag.value == 0f } }
                 CompositionLocalProvider(
                     dev.southstar21.volum.platform.LocalNativeViewsSettled provides still,
                     LocalInGlass provides true,
+                    LocalSheetOnce provides once,
                 ) { content() }
+            }
+            if (!open) {
+                // Over the sheet and scrim while they leave: a second tap lands here, not on an action
+                // that already ran or on the screen under a sheet that is still drawn.
+                Box(Modifier.fillMaxSize().pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } })
             }
         }
     }
+}
+
+/** A downward fling past this dismisses a sheet however little it was dragged. */
+private val FlickVelocity = 400.dp
+
+/** Lets one action through per opening of a sheet. */
+private class SheetOnce {
+    private var fired = false
+
+    fun run(action: () -> Unit) {
+        if (fired) return
+        fired = true
+        action()
+    }
+}
+
+private val LocalSheetOnce = compositionLocalOf<SheetOnce?> { null }
+
+/**
+ * [action], run at most once per opening of the [BottomSheet] it's in: a double tap, or a second tap
+ * before a caller's asynchronous close lands, doesn't run it twice. Outside a sheet it runs every time.
+ */
+@Composable
+fun sheetAction(action: () -> Unit): () -> Unit {
+    val once = LocalSheetOnce.current ?: return action
+    return { once.run(action) }
 }
 
 /**
@@ -591,7 +655,8 @@ fun ActionSheet(open: Boolean, title: String?, subtitle: String? = null, actions
         Column(Modifier.fillMaxWidth().glassCard(RoundedCornerShape(24.dp)).padding(vertical = 4.dp)) {
             actions.forEachIndexed { i, action ->
                 if (i > 0) Divider(inset = 16.dp)
-                SheetActionRow(action) { onDismiss(); action.onClick() }
+                // The action first: it may read state that dismissing clears.
+                SheetActionRow(action) { action.onClick(); onDismiss() }
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -599,13 +664,16 @@ fun ActionSheet(open: Boolean, title: String?, subtitle: String? = null, actions
     }
 }
 
-/** One action in a sheet's glass group: an optional glass icon, the label and a subtitle. */
+/**
+ * One action in a sheet's glass group: an optional glass icon, the label and a subtitle. In a sheet it
+ * runs once per opening (see [sheetAction]).
+ */
 @Composable
 fun SheetActionRow(action: SheetAction, modifier: Modifier = Modifier, plainIcon: Boolean = false, onClick: () -> Unit) {
     val c = Volum.colors
     val color = if (action.destructive) c.danger else c.ink
     Row(
-        modifier.fillMaxWidth().heightIn(min = if (action.subtitle != null) 62.dp else 56.dp).tappable(onClick = onClick).padding(horizontal = 16.dp, vertical = 6.dp),
+        modifier.fillMaxWidth().heightIn(min = if (action.subtitle != null) 62.dp else 56.dp).tappable(onClick = sheetAction(onClick)).padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -628,10 +696,12 @@ fun ConfirmSheet(open: Boolean, title: String, message: String? = null, confirm:
             Txt(title, size = T.SheetTitle, weight = ExtraBold, align = TextAlign.Center)
             message?.let { Spacer(Modifier.height(6.dp)); Mute(it, size = T.Label, align = TextAlign.Center) }
         }
+        // Confirm first: the action may read state that dismissing clears. Once per opening.
+        val confirmOnce = sheetAction { onConfirm(); onDismiss() }
         if (destructive) {
-            DangerButton(confirm) { onDismiss(); onConfirm() }
+            DangerButton(confirm, onClick = confirmOnce)
         } else {
-            PrimaryButton(confirm) { onDismiss(); onConfirm() }
+            PrimaryButton(confirm, onClick = confirmOnce)
         }
         Spacer(Modifier.height(10.dp))
         GlassButton("Cancel", Modifier.fillMaxWidth(), height = 56.dp, onClick = onDismiss)
@@ -677,15 +747,19 @@ fun Toolbar(modifier: Modifier = Modifier, leading: @Composable () -> Unit = { S
     }
 }
 
+/**
+ * A round initial. Screen readers skip it unless given a [contentDescription]: everywhere it sits beside
+ * the name it stands for, and the bare letter alone says nothing.
+ */
 @Composable
-fun Avatar(name: String, modifier: Modifier = Modifier, size: Dp = 44.dp, warm: Boolean = false) {
+fun Avatar(name: String, modifier: Modifier = Modifier, size: Dp = 44.dp, warm: Boolean = false, contentDescription: String? = null) {
     val c = Volum.colors
     val letter = name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
     Box(
         modifier.size(size).then(
-            if (warm) Modifier.clip(CircleShape).background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(c.warmTop, c.warmBottom)))
+            if (warm) Modifier.clip(CircleShape).background(Brush.linearGradient(listOf(c.warmTop, c.warmBottom)))
             else Modifier.liquidGlass(CircleShape),
-        ),
+        ).clearAndSetSemantics { contentDescription?.let { this.contentDescription = it } },
         contentAlignment = Alignment.Center,
     ) {
         Txt(letter, size = (size.value * 0.4f).sp, weight = ExtraBold, color = if (warm) c.warmInk else c.accent)
