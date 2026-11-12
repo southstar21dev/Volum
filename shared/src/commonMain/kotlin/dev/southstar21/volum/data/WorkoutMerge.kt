@@ -8,8 +8,7 @@ import dev.southstar21.volum.util.parseTime
  * Merges the owner's snapshot of an active workout into the server copy, exercise by exercise and
  * set by set, so a partner's edits survive the owner's whole-record sync.
  *
- * Mirrors mergeWorkoutEntries in the web app (web/src/lib/workoutMerge.ts) and mergeEntries in
- * pocketbase/pb_hooks/workout_merge.js — keep all three in sync.
+ * Mirrors mergeEntries in backend/pb_hooks/workout_merge.js — keep the two in sync.
  */
 fun mergeWorkoutEntries(
     server: List<WorkoutEntry>,
@@ -40,6 +39,44 @@ fun mergeWorkoutEntries(
         }
     }
     return merged
+}
+
+/**
+ * [next], an edit of [basis], replayed onto [current]: the stored entries, which may have changed
+ * since [basis] was read (a sync merged in a partner's sets, or a quick second tap saved first).
+ * What the edit removed from [basis] is removed and what it changed is taken from it; everything it
+ * didn't touch comes from [current]. Exercises and sets that arrived meanwhile are kept, ahead of
+ * the ones this edit adds; something gone from [current] meanwhile (a partner removed it) stays gone.
+ */
+fun rebaseEntries(basis: List<WorkoutEntry>, current: List<WorkoutEntry>, next: List<WorkoutEntry>): List<WorkoutEntry> {
+    if (basis == current) return next
+    return rebase(basis, current, next, { it.id }) { b, c, n -> rebaseEntry(b, c, n) }
+}
+
+private fun rebaseEntry(basis: WorkoutEntry, current: WorkoutEntry, next: WorkoutEntry): WorkoutEntry {
+    if (basis == current) return next
+    val head = if (sameEntry(basis, next)) current else next
+    val sets = rebase(basis.sets, current.sets, next.sets, { it.id }) { b, c, n -> if (n == b) c else n }
+    val removed = (current.removedSetIds.orEmpty() + next.removedSetIds.orEmpty()).distinct()
+    return head.copy(sets = sets, removedSetIds = removed.ifEmpty { null })
+}
+
+/**
+ * The three-way merge behind [rebaseEntries], for one list: [next]'s items that were in [basis] and
+ * are still in [current] (combined by [merge]), then items only [current] has, then [next]'s new ones.
+ */
+private fun <T> rebase(basis: List<T>, current: List<T>, next: List<T>, id: (T) -> String, merge: (T, T, T) -> T): List<T> {
+    val before = basis.associateBy(id)
+    val now = current.associateBy(id)
+    val nextIds = next.mapTo(HashSet(), id)
+    val kept = next.mapNotNull { n ->
+        val b = before[id(n)] ?: return@mapNotNull null
+        val c = now[id(n)] ?: return@mapNotNull null
+        merge(b, c, n)
+    }
+    val arrived = current.filter { id(it) !in before && id(it) !in nextIds }
+    val added = next.filter { id(it) !in before }
+    return kept + arrived + added
 }
 
 /** Stamps every exercise and set that is new or changed since [previous], for the merge above. */

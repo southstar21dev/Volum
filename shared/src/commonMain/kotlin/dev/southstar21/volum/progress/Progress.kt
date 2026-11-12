@@ -6,6 +6,7 @@ import dev.southstar21.volum.model.WeightUnit
 import dev.southstar21.volum.model.Workout
 import dev.southstar21.volum.model.WorkoutEntry
 import dev.southstar21.volum.model.WorkoutStatus
+import dev.southstar21.volum.data.topSetOrder
 import dev.southstar21.volum.util.convert
 import dev.southstar21.volum.util.displayName
 import dev.southstar21.volum.util.durationLabel
@@ -25,7 +26,6 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.daysUntil
 import kotlinx.datetime.minus
-import kotlinx.datetime.plus
 
 // Ported from web/src/lib/progress (sets.ts, copy.ts, dashboard.ts) and web/src/lib/chart.ts.
 
@@ -285,7 +285,7 @@ private fun weeklyVolume(own: List<Timed>, now: Long): List<WeekVolume> {
     return starts.mapIndexed { i, s -> WeekVolume(s, volume[i]) }
 }
 
-/** Kilograms lifted in the week starting Monday containing [now] (all working sets). */
+/** Kilograms lifted in [workout]: weight × reps summed over its working sets. */
 fun volumeKg(workout: Workout): Double = workout.entries.sumOf { e -> workingSets(e).sumOf { toKg(it.weight, it.unit) * it.reps } }
 
 private fun toSlide(id: String, fullName: String, cmp: Comparison, lead: String, value: String): Ranked? = when (cmp) {
@@ -313,31 +313,10 @@ fun agoLabel(days: Int): String = when {
 
 // ---- Chart ----------------------------------------------------------------------------------
 
-data class ChartPoint(val time: Long, val value: Double, val reps: Int, val workoutId: String)
+/** One session's top set: kg (with [reps]), or seconds when the entry was logged as a hold ([timed]). */
+data class ChartPoint(val time: Long, val value: Double, val reps: Int, val workoutId: String, val timed: Boolean = false)
 
 enum class ChartRange(val label: String, val days: Int?) { D30("30D", 30), M3("3M", 91), M6("6M", 182), Y1("1Y", 365), All("All", null) }
-
-/** One point per completed session: the top set's weight in kg, or the longest hold in seconds for a timed lift. */
-fun buildChartSeries(workouts: List<Workout>, exerciseId: String, timed: Boolean): List<ChartPoint> {
-    val points = mutableListOf<ChartPoint>()
-    for (w in workouts) {
-        if (w.status != WorkoutStatus.Completed || w.deleted) continue
-        val entry = w.entries.firstOrNull { it.exerciseId == exerciseId && !it.isSkipped } ?: continue
-        if (timed) {
-            val longest = entry.sets.filter { it.done && it.tag != SetTag.Warmup }.maxOfOrNull { it.seconds ?: 0 } ?: 0
-            if (longest > 0) points += ChartPoint(workoutTime(w), longest.toDouble(), 0, w.id)
-            continue
-        }
-        var best: Pair<Double, Int>? = null
-        for (set in entry.sets) {
-            if (!set.done || set.tag == SetTag.Warmup) continue
-            val kg = toKg(set.weight, set.unit)
-            if (best == null || kg > best.first) best = kg to set.reps
-        }
-        best?.let { points += ChartPoint(workoutTime(w), (it.first * 10).roundToLong() / 10.0, it.second, w.id) }
-    }
-    return points.sortedBy { it.time }
-}
 
 /**
  * Every lift's top set per completed session, oldest first, in one pass over [workouts]: the heaviest
@@ -356,15 +335,16 @@ fun topSetSeries(workouts: Collection<Workout>, userId: String): Map<String, Lis
             val point = if (entry.isTimed) {
                 val longest = sets.maxOf { it.seconds ?: 0 }
                 if (longest <= 0) continue
-                ChartPoint(time, longest.toDouble(), 0, w.id)
+                ChartPoint(time, longest.toDouble(), 0, w.id, timed = true)
             } else {
-                val top = sets.maxWith(compareBy<SetEntry> { toKg(it.weight, it.unit) }.thenBy { it.reps })
+                val top = sets.maxWith(topSetOrder(timed = false))
                 ChartPoint(time, toKg(top.weight, top.unit), top.reps, w.id)
             }
             val list = out.getOrPut(entry.exerciseId) { mutableListOf() }
             val last = list.lastOrNull()
             if (last != null && last.workoutId == w.id) {
-                if (point.value > last.value) list[list.lastIndex] = point
+                // The same order as within one entry: heavier (or longer) first, then more reps.
+                if (point.value > last.value || (point.value == last.value && point.reps > last.reps)) list[list.lastIndex] = point
             } else {
                 list += point
             }
@@ -378,6 +358,3 @@ fun filterRange(points: List<ChartPoint>, range: ChartRange, now: Long): List<Ch
     val cutoff = now - days * 86_400_000L
     return points.filter { it.time >= cutoff }
 }
-
-@Suppress("unused")
-private fun keep(d: LocalDate) = d.plus(DatePeriod(days = 0))

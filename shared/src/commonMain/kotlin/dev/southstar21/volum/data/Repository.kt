@@ -38,13 +38,18 @@ class Repository(val store: LocalStore, val owner: String) {
 
     // ---- Exercises ----------------------------------------------------------------------------
 
+    /**
+     * Creates or updates one of the user's exercises. A partner's exercise is left as it is and
+     * returned unchanged: writing it would either take it over or be rejected and stick in the outbox.
+     */
     suspend fun saveExercise(id: String? = null, name: String, timed: Boolean? = null): Exercise {
         val record = store.transaction {
             val existing = id?.let { exercises[it] }
+            if (existing != null && existing.owner != owner) return@transaction existing
             val record = Exercise(
                 id = existing?.id ?: id ?: newId(),
-                owner = owner,
-                name = name,
+                owner = existing?.owner ?: owner,
+                name = name.trim().take(MAX_EXERCISE_NAME),
                 timed = timed ?: existing?.timed ?: false,
                 updatedAt = nowIso(),
                 deleted = existing?.deleted ?: false,
@@ -53,35 +58,72 @@ class Repository(val store: LocalStore, val owner: String) {
             queue(Collection.Exercises, record.id, payload(Exercise.serializer(), record.copy(updated = null)))
             record
         }
-        announce()
+        if (record.owner == owner) announce()
         return record
     }
 
-    suspend fun deleteExercise(id: String) {
-        store.transaction {
-            val existing = exercises[id] ?: return@transaction
-            val record = existing.copy(deleted = true, updatedAt = nowIso())
+    /**
+     * Renames one of the user's exercises and every item of the user's routines that points at it:
+     * routine items carry their own copy of the name, and a new session takes the name from there.
+     * A partner's exercise or routine is never written (see [saveExercise]).
+     */
+    suspend fun renameExercise(id: String, name: String): Exercise {
+        val record = store.transaction {
+            val existing = exercises[id] ?: error("no exercise $id")
+            if (existing.owner != owner) return@transaction existing
+            // Rebuilt without the server's `updated`, like every local save: a record without it is one
+            // a damaged outbox re-queues (LocalStore.requeueUnsynced).
+            val newName = name.trim().take(MAX_EXERCISE_NAME)
+            val record = existing.copy(name = newName, updatedAt = nowIso(), updated = null)
             putExercise(record)
-            queue(Collection.Exercises, id, payload(Exercise.serializer(), record.copy(updated = null)))
+            queue(Collection.Exercises, id, payload(Exercise.serializer(), record))
+            routines.values
+                .filter { it.owner == owner && !it.deleted && it.items.any { i -> i.exerciseId == id && i.name != newName } }
+                .forEach {
+                    val r = it.copy(items = it.items.map { i -> if (i.exerciseId == id) i.copy(name = newName) else i }, updatedAt = nowIso(), updated = null)
+                    putRoutine(r)
+                    queue(Collection.Routines, r.id, payload(Routine.serializer(), r))
+                }
+            record
         }
-        announce()
+        if (record.owner == owner) announce()
+        return record
     }
 
+    /** Deletes one of the user's exercises; anyone else's is left alone (see [saveExercise]). */
+    suspend fun deleteExercise(id: String) {
+        val deleted = store.transaction {
+            val existing = exercises[id]?.takeIf { it.owner == owner } ?: return@transaction false
+            // Without the server's `updated`, like every local save, so a damaged outbox re-queues it.
+            val record = existing.copy(deleted = true, updatedAt = nowIso(), updated = null)
+            putExercise(record)
+            queue(Collection.Exercises, id, payload(Exercise.serializer(), record))
+            true
+        }
+        if (deleted) announce()
+    }
+
+    /**
+     * The user's own exercise by this name, or a new one. Anyone else's is never reused: the user
+     * couldn't rename or delete it, and its owner could.
+     */
     suspend fun findOrCreateExercise(name: String, timed: Boolean = false): Exercise {
-        val trimmed = name.trim()
-        val existing = store.exercises.value.values.firstOrNull { !it.deleted && it.name.equals(trimmed, ignoreCase = true) }
+        val trimmed = name.trim().take(MAX_EXERCISE_NAME)
+        val existing = ownExerciseNamed(store.exercises.value, owner, trimmed)
         return existing ?: saveExercise(name = trimmed, timed = timed)
     }
 
     // ---- Routines -----------------------------------------------------------------------------
 
+    /** Creates or updates one of the user's routines; a partner's is returned unchanged (see [saveExercise]). */
     suspend fun saveRoutine(id: String? = null, name: String, items: List<RoutineItem>): Routine {
         val record = store.transaction {
             val existing = id?.let { routines[it] }
+            if (existing != null && existing.owner != owner) return@transaction existing
             val record = Routine(
                 id = existing?.id ?: id ?: newId(),
                 owner = existing?.owner ?: owner,
-                name = name,
+                name = name.trim().take(MAX_ROUTINE_NAME),
                 items = items,
                 updatedAt = nowIso(),
                 deleted = existing?.deleted ?: false,
@@ -90,18 +132,19 @@ class Repository(val store: LocalStore, val owner: String) {
             queue(Collection.Routines, record.id, payload(Routine.serializer(), record.copy(updated = null)))
             record
         }
-        announce()
+        if (record.owner == owner) announce()
         return record
     }
 
     suspend fun deleteRoutine(id: String) {
-        store.transaction {
-            val existing = routines[id] ?: return@transaction
-            val record = existing.copy(deleted = true, updatedAt = nowIso())
+        val deleted = store.transaction {
+            val existing = routines[id]?.takeIf { it.owner == owner } ?: return@transaction false
+            val record = existing.copy(deleted = true, updatedAt = nowIso(), updated = null)
             putRoutine(record)
-            queue(Collection.Routines, id, payload(Routine.serializer(), record.copy(updated = null)))
+            queue(Collection.Routines, id, payload(Routine.serializer(), record))
+            true
         }
-        announce()
+        if (deleted) announce()
     }
 
     suspend fun duplicateRoutine(routine: Routine): Routine =
@@ -117,20 +160,28 @@ class Repository(val store: LocalStore, val owner: String) {
         finishedAt: String? = null,
         status: WorkoutStatus? = null,
         entries: List<WorkoutEntry>,
+        basis: List<WorkoutEntry>? = null,
     ): Workout {
         val record = store.transaction {
             val existing = id?.let { workouts[it] }
             val now = nowIso()
+            // [entries] is an edit of [basis], the copy the screen showed. A sync may have brought a
+            // partner's sets in since; they aren't the user's removals, so the edit is replayed onto
+            // the stored entries instead of replacing them.
+            val entries = if (existing != null && basis != null) rebaseEntries(basis, existing.entries, entries) else entries
+            // While a partner can edit the workout, what the owner removes is remembered like a
+            // partner's removals, so a merge with a server copy that still has it doesn't bring it back.
+            val active = existing?.takeIf { it.status == WorkoutStatus.Active && !it.deleted }
             val record = Workout(
                 id = existing?.id ?: id ?: newId(),
                 owner = owner,
                 routineId = routineId ?: existing?.routineId,
-                routineName = routineName,
+                routineName = routineName.trim().take(MAX_ROUTINE_NAME),
                 startedAt = startedAt ?: existing?.startedAt ?: now,
                 finishedAt = finishedAt ?: existing?.finishedAt,
                 status = status ?: existing?.status ?: WorkoutStatus.Active,
-                entries = stampChangedSets(existing?.entries, entries, now),
-                removedEntryIds = existing?.removedEntryIds,
+                entries = stampChangedSets(existing?.entries, if (active != null) withRemovedSets(active.entries, entries) else entries, now),
+                removedEntryIds = if (active != null) removedEntries(active, entries) else existing?.removedEntryIds,
                 updatedAt = now,
                 deleted = existing?.deleted ?: false,
             )
@@ -142,6 +193,24 @@ class Repository(val store: LocalStore, val owner: String) {
         return record
     }
 
+    /** [existing]'s removed exercises plus those missing from [entries]. */
+    private fun removedEntries(existing: Workout, entries: List<WorkoutEntry>): List<String>? {
+        val kept = entries.map { it.id }.toSet()
+        return (existing.removedEntryIds.orEmpty() + existing.entries.map { it.id })
+            .distinct().filter { it !in kept }.ifEmpty { null }
+    }
+
+    /** [next] with each exercise's removed sets: those it had before, plus those missing since [previous]. */
+    private fun withRemovedSets(previous: List<WorkoutEntry>, next: List<WorkoutEntry>): List<WorkoutEntry> =
+        next.map { entry ->
+            val before = previous.find { it.id == entry.id } ?: return@map entry
+            val kept = entry.sets.map { it.id }.toSet()
+            val removed = (before.removedSetIds.orEmpty() + entry.removedSetIds.orEmpty() + before.sets.map { it.id })
+                .distinct().filter { it !in kept }
+            entry.copy(removedSetIds = removed.ifEmpty { null })
+        }
+
+    /** Saves [entries], an edit of [workout] as the screen had it (see [saveWorkout]'s basis). */
     suspend fun updateWorkout(workout: Workout, entries: List<WorkoutEntry> = workout.entries, routineName: String = workout.routineName): Workout =
         saveWorkout(
             id = workout.id,
@@ -151,16 +220,37 @@ class Repository(val store: LocalStore, val owner: String) {
             finishedAt = workout.finishedAt,
             status = workout.status,
             entries = entries,
+            basis = workout.entries,
         )
 
     suspend fun deleteWorkout(id: String) {
         store.transaction {
             val existing = workouts[id] ?: return@transaction
-            val record = existing.copy(deleted = true, updatedAt = nowIso())
+            val record = existing.copy(deleted = true, updatedAt = nowIso(), updated = null)
             putWorkout(record)
-            queue(Collection.Workouts, id, payload(Workout.serializer(), record.copy(updated = null)))
+            queue(Collection.Workouts, id, payload(Workout.serializer(), record))
         }
         announce()
+    }
+
+    /**
+     * Discards the workouts in [ids] that are still unfinished. A prompt can stay open for a while,
+     * and one of them may have been finished on another device meanwhile: that one is kept.
+     * Returns the ids discarded.
+     */
+    suspend fun discardUnfinished(ids: List<String>): List<String> {
+        val discarded = store.transaction {
+            val now = nowIso()
+            ids.mapNotNull { id ->
+                val existing = workouts[id]?.takeIf { it.status == WorkoutStatus.Active && !it.deleted && it.owner == owner } ?: return@mapNotNull null
+                val record = existing.copy(deleted = true, updatedAt = now, updated = null)
+                putWorkout(record)
+                queue(Collection.Workouts, id, payload(Workout.serializer(), record))
+                id
+            }
+        }
+        if (discarded.isNotEmpty()) announce()
+        return discarded
     }
 
     suspend fun finishWorkout(workout: Workout): Workout = saveWorkout(
@@ -171,6 +261,7 @@ class Repository(val store: LocalStore, val owner: String) {
         finishedAt = nowIso(),
         status = WorkoutStatus.Completed,
         entries = workout.entries,
+        basis = workout.entries,
     )
 
     suspend fun startSession(routine: Routine, preferred: WeightUnit): Workout {
@@ -178,10 +269,13 @@ class Repository(val store: LocalStore, val owner: String) {
         return saveWorkout(routineId = routine.id, routineName = routine.name, entries = entries)
     }
 
-    /** Drops the partner's exercises and routines after unpairing (they're no longer visible). */
+    /**
+     * Drops a former partner's routines after unpairing: they're no longer visible. Exercises stay:
+     * the server's exercise library is visible to every account (migration 1759600008), so the
+     * partner's are still pulled, and the user's routines and history may point at them.
+     */
     suspend fun deletePartnerLocalData() {
         store.transaction {
-            removeExercises(exercises.values.filter { it.owner != owner }.map { it.id }.toSet())
             removeRoutines(routines.values.filter { it.owner != owner }.map { it.id }.toSet())
         }
     }
@@ -252,11 +346,37 @@ class Repository(val store: LocalStore, val owner: String) {
     }
 }
 
+/** Longest names the server accepts (pb_migrations: routines.name and workouts.routineName, exercises.name). */
+const val MAX_ROUTINE_NAME = 120
+const val MAX_EXERCISE_NAME = 200
+
+/** [owner]'s live exercise called [name] (ignoring case and surrounding spaces), if any. */
+fun ownExerciseNamed(exercises: Map<String, Exercise>, owner: String, name: String, exceptId: String? = null): Exercise? {
+    val wanted = name.trim()
+    return exercises.values.firstOrNull { it.owner == owner && !it.deleted && it.id != exceptId && it.name.trim().equals(wanted, ignoreCase = true) }
+}
+
+/**
+ * Another of [owner]'s lifts already called [name], which renaming [exceptId] to it would make
+ * ambiguous. Other users' lifts don't count: the exercise library is shared by every account, and
+ * name matching ([Repository.findOrCreateExercise]) only ever picks the user's own.
+ */
+fun nameClash(exercises: Map<String, Exercise>, owner: String, exceptId: String, name: String): Exercise? =
+    if (name.isBlank()) null else ownExerciseNamed(exercises, owner, name, exceptId)
+
+/**
+ * The order every view picks a top set by: the heaviest set in kg, then the most reps; for a timed
+ * lift the longest hold, then the heaviest.
+ */
+fun topSetOrder(timed: Boolean): Comparator<SetEntry> =
+    if (timed) compareBy<SetEntry> { it.seconds ?: 0 }.thenBy { dev.southstar21.volum.util.toKg(it.weight, it.unit) }
+    else compareBy<SetEntry> { dev.southstar21.volum.util.toKg(it.weight, it.unit) }.thenBy { it.reps }
+
 /** "62.5 kg × 8" for the top working set of last time, or a hold length for timed lifts. */
 fun lastTopSetLabel(sets: List<SetEntry>, timed: Boolean): String? {
     val qualifying = sets.filter { it.done && it.tag != SetTag.Warmup }
     if (qualifying.isEmpty()) return null
-    val top = qualifying.maxBy { dev.southstar21.volum.util.toKg(it.weight, it.unit) * 1000 + (if (timed) (it.seconds ?: 0) else it.reps) }
+    val top = qualifying.maxWith(topSetOrder(timed))
     return if (timed) {
         if (top.weight > 0) "${formatWeight(top.weight, top.unit)} × ${formatSeconds(top.seconds ?: 0)}" else formatSeconds(top.seconds ?: 0)
     } else {
