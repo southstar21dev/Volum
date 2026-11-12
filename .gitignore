@@ -41,3 +41,6 @@ keystore.properties
 # Build output and dependencies
 dist/
 node_modules/
+
+# PocketBase data from a local backend run
+backend/pb_data/
