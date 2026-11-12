@@ -2,9 +2,18 @@ package dev.southstar21.volum.ui.components
 
 import dev.southstar21.volum.platform.nativeSegmented
 import dev.southstar21.volum.platform.hapticTick
-import dev.southstar21.volum.ui.liquid.LiquidTabs
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -78,7 +87,7 @@ import dev.southstar21.volum.ui.theme.LocalReduceMotion
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clip import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
@@ -297,8 +306,9 @@ fun Spinner(color: Color, modifier: Modifier = Modifier, size: Dp = 22.dp) {
 }
 
 /**
- * Every switcher in the app, on both platforms: a Kyant liquid-glass pane whose selection is a drop
- * of glass, like the Android dock's tabs.
+ * Every switcher in the app: the platform's own control where there is one (UISegmentedControl on
+ * iOS, see nativeSegmented), otherwise a plain copy of its look: a grey capsule track with a white
+ * capsule sliding under the selected label. No glass; only the dock's tabs are liquid.
  */
 @Composable
 fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier, height: Dp = 38.dp, fill: Boolean = false) {
@@ -315,25 +325,57 @@ fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, mod
     val segment = remember(options, style, density) {
         with(density) { options.maxOf { measurer.measure(it, style).size.width }.toDp() } + 28.dp
     }
-    val pane = rememberLiquidPane()
-    LiquidTabs(
-        count = options.size,
-        selectedIndex = selected,
-        onSelect = onSelect,
-        backdrop = LocalBackdrop.current,
-        accent = c.accent,
-        // What the selection drop shows the pane as: a solid stand-in for the glass below.
-        container = Color.White.copy(alpha = 0.66f),
-        selection = c.soft,
-        modifier = modifier.then(if (fill) Modifier.fillMaxWidth() else Modifier.width(segment * options.size + 8.dp)),
-        // The pane is at least 48dp tall, the minimum touch target, whatever [height] the labels get.
-        height = maxOf(height + 8.dp, 48.dp),
-        frosted = !glassEffects(),
-        nested = LocalInGlass.current,
-        surface = pane,
-        onCross = { hapticTick() },
-    ) { index, tinted ->
-        Txt(options[index], size = T.Small, weight = if (tinted) ExtraBold else Semibold, color = if (tinted) c.accent else c.ink, maxLines = 1)
+    val reduce = LocalReduceMotion.current
+    val position by animateFloatAsState(
+        selected.coerceIn(0, options.lastIndex).toFloat(),
+        if (reduce) snap() else spring(dampingRatio = 0.82f, stiffness = 520f),
+        label = "segment",
+    )
+    // The track is [height] tall, like the system control; each segment's touch area is the full
+    // 48dp minimum, centred on it.
+    Box(
+        modifier
+            .then(if (fill) Modifier.fillMaxWidth() else Modifier.width(segment * options.size + 4.dp))
+            .height(maxOf(height, 48.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        BoxWithConstraints(
+            Modifier
+                .fillMaxWidth()
+                .height(height)
+                .clip(CircleShape)
+                .background(Color(0x1F767680))
+                .padding(2.dp),
+        ) {
+            val each = maxWidth / options.size
+            Box(
+                Modifier
+                    .offset { IntOffset((each.toPx() * position).roundToInt(), 0) }
+                    .width(each)
+                    .fillMaxHeight()
+                    .shadow(3.dp, CircleShape, ambientColor = Color.Black.copy(alpha = 0.12f), spotColor = Color.Black.copy(alpha = 0.12f))
+                    .background(Color.White, CircleShape),
+            )
+        }
+        Row(Modifier.fillMaxSize().selectableGroup()) {
+            options.forEachIndexed { index, option ->
+                val on = index == selected
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .selectable(selected = on, role = Role.Tab, indication = null, interactionSource = null) {
+                            if (!on) {
+                                hapticTick()
+                                onSelect(index)
+                            }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Txt(option, size = T.Small, weight = Semibold, color = c.ink, maxLines = 1)
+                }
+            }
+        }
     }
 }
 

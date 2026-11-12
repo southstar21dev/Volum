@@ -15,7 +15,7 @@ val LocalNativeViewsSettled = compositionLocalOf { true }
 typealias NativeSegmentedControl = @Composable (options: List<String>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier, fill: Boolean) -> Unit
 
 /**
- * The platform's segmented control where switchers are the system's own, or null where Compose draws
- * them (both platforms today: see Segmented). Kept as a hook should a system control be wanted again.
+ * The platform's own segmented control: UISegmentedControl on iOS. Null on Android, which draws the
+ * plain rounded switcher in Segmented.
  */
 expect val nativeSegmented: NativeSegmentedControl?
