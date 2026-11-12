@@ -1,12 +1,28 @@
 package dev.southstar21.volum.platform
 
 import io.ktor.client.HttpClient
+import io.ktor.client.HttpClientConfig
+import io.ktor.client.plugins.HttpTimeout
 
 /** Where this app keeps its local database files (one folder per signed-in user underneath). */
 expect fun appDataDirectory(): String
 
 /** A Ktor client on the platform's engine (OkHttp on Android, NSURLSession on iOS). */
 expect fun createHttpClient(): HttpClient
+
+/**
+ * Bounds every call, so a request stalled on a dead connection fails (and sync retries) instead of
+ * holding the sync lock until the app restarts. The socket timeout catches a stall; the total is only
+ * a backstop for a connection that trickles, long enough for a full 500-record pull page to arrive
+ * over a weak gym connection. The realtime stream lifts these for itself only.
+ */
+internal fun HttpClientConfig<*>.installTimeouts() {
+    install(HttpTimeout) {
+        connectTimeoutMillis = 15_000
+        socketTimeoutMillis = 30_000
+        requestTimeoutMillis = 5 * 60_000
+    }
+}
 
 expect val isIos: Boolean
 

@@ -8,7 +8,6 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
-import java.util.concurrent.TimeUnit
 
 /** Set once from the Application before anything else touches the platform layer. */
 @SuppressLint("StaticFieldLeak")
@@ -28,12 +27,7 @@ object AndroidPlatform {
 actual fun appDataDirectory(): String = AndroidPlatform.context.filesDir.absolutePath
 
 actual fun createHttpClient(): HttpClient = HttpClient(OkHttp) {
-    engine {
-        config {
-            connectTimeout(15, TimeUnit.SECONDS)
-            readTimeout(0, TimeUnit.SECONDS)
-        }
-    }
+    installTimeouts()
     expectSuccess = false
 }
 
