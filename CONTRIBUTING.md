@@ -33,4 +33,5 @@ decides the next version:
 ```
 
 The Xcode project is generated: run `cd iosApp && xcodegen` after cloning, and edit
-`iosApp/project.yml` rather than the project itself.
+`iosApp/project.yml` rather than the project itself. CI uses XcodeGen 2.46.0
+(`scripts/install-xcodegen.sh`); a local install of the same version generates the same project.

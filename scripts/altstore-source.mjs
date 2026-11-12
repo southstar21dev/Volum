@@ -3,7 +3,7 @@
 // the repo's GitHub Releases (every non-prerelease with an .ipa asset) into altstore.json.
 // Rebuilding from the releases each time keeps the sources in step with what's actually published,
 // so nothing has to be committed back to the repo. Needs GITHUB_REPOSITORY and GITHUB_TOKEN.
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const outDir = process.argv[2] ?? "site";
@@ -12,7 +12,15 @@ const token = process.env.GITHUB_TOKEN;
 
 const raw = `https://raw.githubusercontent.com/${repo}/master`;
 const tint = "#1F4D33";
-const minOSVersion = "18.5"; // iosApp/project.yml deploymentTarget
+const minOSVersion = await deploymentTarget();
+
+// The app's iOS deploymentTarget, read from the XcodeGen spec so the two can't drift apart.
+async function deploymentTarget() {
+  const spec = await readFile(new URL("../iosApp/project.yml", import.meta.url), "utf8");
+  const match = /^[ \t]+iOS:[ \t]*"?(\d+(?:\.\d+)*)"?/m.exec(spec);
+  if (!match) throw new Error("iosApp/project.yml: no iOS deploymentTarget");
+  return match[1];
+}
 
 async function releases() {
   const all = [];

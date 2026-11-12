@@ -3,7 +3,7 @@ name: iosApp
 options:
   bundleIdPrefix: dev.southstar21
   deploymentTarget:
-    iOS: "18.5"  # Compose Multiplatform's bundled ICU is built for 18.5
+    iOS: "18.5"  # Compose Multiplatform's bundled ICU is built for 18.5. scripts/altstore-source.mjs reads it.
   createIntermediateGroups: true
 settings:
   base:
@@ -44,7 +44,7 @@ targets:
         "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": "-"
         "ARCHS[sdk=iphonesimulator*]": arm64
         FRAMEWORK_SEARCH_PATHS: "$(SRCROOT)/../shared/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)"
-        OTHER_LDFLAGS: ["$(inherited)", "-framework", "Shared", "-lsqlite3", "-lc++"]
+        OTHER_LDFLAGS: ["$(inherited)", "-framework", "Shared", "-lc++"]
     preBuildScripts:
       - name: Version from Gradle
         basedOnDependencyAnalysis: false
