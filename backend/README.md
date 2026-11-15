@@ -10,10 +10,26 @@ The PocketBase server the apps sync with (`volum.pocketbaseUrl` in `gradle.prope
   whole-workout push with the stored copy.
 - `pb_hooks/workout_merge.js`: the merge itself. `shared/.../data/WorkoutMerge.kt` mirrors it; keep
   the two in sync.
+- `pb_hooks/version_gate.pb.js`: refuses app builds older than a minimum with a 426 (see below).
+  `pb_hooks/version_gate.js` holds the comparison.
 - `Dockerfile`, `start.sh`: the deployed image. Build it with this folder as the context.
 
 Environment for the container: `PB_ADMIN_EMAIL` and `PB_ADMIN_PASSWORD` (superuser, upserted on
 start), `PB_ORIGINS` (optional CORS origins). Data lives in `/pb_data`; mount it as a volume.
+
+## Forcing an update
+
+The `app_config` collection has one record, edited in the dashboard; a change applies to the next
+request.
+
+- `minIos`, `minAndroid`: the oldest app version still served on that platform (`1.6.0`). Empty
+  means no minimum. Older builds get a 426 and show an "update required" screen.
+- `blockLegacy`: also refuses builds from before the app sent its version (1.x builds without the
+  update screen), iOS and Android alike. They show the refusal as a sync error and keep their
+  unsynced changes until updated.
+
+Only set a minimum once the build that satisfies it is out on every channel for that platform.
+The dashboard, browsers and the health check send no app version and are never refused.
 
 ## Run locally
 

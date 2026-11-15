@@ -229,7 +229,8 @@ class SyncEngine(
                 }
                 store.transaction { updateOutbox { list -> list.filterNot { it.id == item.id } } }
             } catch (e: PbException) {
-                if (e.status == 401 || isTransient(e.status)) throw e
+                // An out-of-date build is refused whatever it sends: the change itself isn't at fault.
+                if (e.status == 401 || e.status == PocketBase.UPDATE_REQUIRED || isTransient(e.status)) throw e
                 store.transaction {
                     updateOutbox { list -> list.map { if (it.id == item.id) it.copy(failed = true, attempts = it.attempts + 1, lastError = e.message) else it } }
                 }

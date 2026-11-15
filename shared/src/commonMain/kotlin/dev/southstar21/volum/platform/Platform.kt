@@ -31,6 +31,11 @@ expect val pocketBaseUrl: String
 
 expect val appVersion: String
 
+/** Where this install gets its updates: the button's label and the link it opens. */
+data class UpdateTarget(val label: String, val url: String)
+
+expect fun updateTarget(): UpdateTarget
+
 /** The smallest detent: a tab or chip crossed, a reorder step. Same as [haptic] with [Haptic.Tick]. */
 fun hapticTick() = haptic(Haptic.Tick)
 

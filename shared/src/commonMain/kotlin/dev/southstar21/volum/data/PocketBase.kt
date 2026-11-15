@@ -52,8 +52,22 @@ data class PbList(val page: Int, val totalPages: Int, val items: List<JsonObject
  * The slice of the PocketBase REST API Volum uses: password auth, record CRUD, the partner
  * routes in backend/pb_hooks/partner.pb.js and realtime record events.
  */
-class PocketBase(private val baseUrl: String, private val http: HttpClient) {
+class PocketBase(
+    private val baseUrl: String,
+    private val http: HttpClient,
+    /** Sent with every request so the server can turn away builds it no longer supports (backend/pb_hooks/version_gate.pb.js). */
+    private val clientVersion: String? = null,
+    private val clientPlatform: String? = null,
+) {
     @Volatile var token: String? = null
+
+    /** Called when the server refuses this build as too old (426), with the version it asks for if it said. */
+    @Volatile var onUpdateRequired: ((minVersion: String?) -> Unit)? = null
+
+    private fun HttpRequestBuilder.identify() {
+        clientVersion?.let { header(APP_VERSION_HEADER, it) }
+        clientPlatform?.let { header(APP_PLATFORM_HEADER, it) }
+    }
 
     private fun url(path: String) = baseUrl.trimEnd('/') + path
 
@@ -68,6 +82,7 @@ class PocketBase(private val baseUrl: String, private val http: HttpClient) {
         val (status, text) = try {
             val response = http.request(url(path)) {
                 this.method = method
+                identify()
                 token?.let { header("Authorization", it) }
                 if (body != null) {
                     contentType(ContentType.Application.Json)
@@ -88,6 +103,10 @@ class PocketBase(private val baseUrl: String, private val http: HttpClient) {
         if (status !in 200..299) {
             val obj = json as? JsonObject
             val message = obj?.get("message")?.jsonPrimitive?.contentOrNull ?: "Request failed ($status)"
+            if (status == UPDATE_REQUIRED) {
+                val minVersion = ((obj?.get("data") as? JsonObject)?.get("minVersion") as? JsonPrimitive)?.contentOrNull
+                onUpdateRequired?.invoke(minVersion?.takeIf(String::isNotBlank))
+            }
             throw PbException(status, message, obj?.get("data") as? JsonObject)
         }
         // A 2xx whose body isn't JSON (a captive portal's login page, a truncated proxy reply) is
@@ -178,6 +197,7 @@ class PocketBase(private val baseUrl: String, private val http: HttpClient) {
             while (isActive) {
                 try {
                     http.prepareGet(url("/api/realtime")) {
+                        identify()
                         header("Accept", "text/event-stream")
                         // The stream stays open and idle between events; only this request is unbounded.
                         timeout {
@@ -228,6 +248,11 @@ class PocketBase(private val baseUrl: String, private val http: HttpClient) {
 
     companion object {
         private const val UNEXPECTED_RESPONSE = "Unexpected response from server"
+        const val APP_VERSION_HEADER = "X-App-Version"
+        const val APP_PLATFORM_HEADER = "X-App-Platform"
+
+        /** 426 Upgrade Required: the server's answer to a build older than its minimum. */
+        const val UPDATE_REQUIRED = 426
 
         /** pb.filter: binds {:name} placeholders as quoted strings. */
         fun filter(expr: String, params: Map<String, String>): String {

@@ -122,6 +122,7 @@ object Icons {
     val Swap = stroke("swap", "M7 7h11l-3-3M17 17H6l3 3")
     val Refresh = stroke("refresh", "M21 12a9 9 0 1 1-3-6.7L21 8", "M21 3v5h-5")
     val ArrowRight = stroke("arrowRight", "M5 12h14M13 6l6 6-6 6")
+    val ArrowUpRight = stroke("arrowUpRight", "M7 17L17 7M9 7h8v8")
     val Copy = stroke("copy", rect(8f, 8f, 13f, 13f, 2f), "M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3")
 }
 

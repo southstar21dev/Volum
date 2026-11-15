@@ -112,6 +112,7 @@ import dev.southstar21.volum.ui.theme.Volum
 import dev.southstar21.volum.ui.theme.VolumTheme
 import dev.southstar21.volum.ui.theme.tappable
 import dev.southstar21.volum.ui.today.TodayScreen
+import dev.southstar21.volum.ui.update.UpdateRequiredScreen
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 
@@ -222,10 +223,16 @@ fun VolumApp(app: AppContainer) {
             GlassRoot(solid = prefs.solidBackground) {
                 val ready by app.ready.collectAsStateWithLifecycle()
                 val session by app.session.collectAsStateWithLifecycle()
+                val updateRequired by app.updateRequired.collectAsStateWithLifecycle()
+                LifecycleStartEffect(app) {
+                    app.checkUpdateRequired()
+                    onStopOrDispose {}
+                }
                 // A sheet is modal: while one is up, screen readers don't wander into the screen under it.
                 Box(Modifier.fillMaxSize().then(if (overlays.isShowing) Modifier.clearAndSetSemantics {} else Modifier)) {
                     val gate = when {
                         !ready -> Gate.Loading
+                        updateRequired != null -> Gate.Update
                         session == null -> Gate.Auth
                         !prefs.onboardingDone -> Gate.Onboarding
                         else -> Gate.Main
@@ -233,6 +240,9 @@ fun VolumApp(app: AppContainer) {
                     // The app leaving as it signs out still needs the session it was showing.
                     var lastSession by remember { mutableStateOf(session) }
                     if (session != null) lastSession = session
+                    // Likewise the update screen, as it leaves once the server accepts this build again.
+                    var lastUpdate by remember { mutableStateOf(updateRequired) }
+                    if (updateRequired != null) lastUpdate = updateRequired
                     // Log in, onboarding and the app cross over: the old one fades out first, then the new
                     // one fades in (with its own staggered entrance), so they never overlap.
                     androidx.compose.animation.AnimatedContent(
@@ -249,6 +259,10 @@ fun VolumApp(app: AppContainer) {
                         CompositionLocalProvider(LocalNativeViewsSettled provides (LocalNativeViewsSettled.current && !moving)) {
                             when (g) {
                                 Gate.Loading -> Unit
+                                Gate.Update -> {
+                                    LaunchedEffect(Unit) { platformNavbar?.detach() }
+                                    Entered { UpdateRequiredScreen(lastUpdate?.minVersion) }
+                                }
                                 Gate.Auth -> {
                                     LaunchedEffect(Unit) { platformNavbar?.detach() }
                                     Entered { AuthScreen() }
@@ -274,7 +288,7 @@ fun VolumApp(app: AppContainer) {
     }
 }
 
-private enum class Gate { Loading, Auth, Onboarding, Main }
+private enum class Gate { Loading, Update, Auth, Onboarding, Main }
 
 /**
  * Sync polls quickly during a workout only while the app is on screen. Coming back to the foreground
