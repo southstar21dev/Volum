@@ -136,11 +136,22 @@ data class EntryActions(
     val onExpand: (entry: WorkoutEntry) -> Unit,
     /** The sets are someone else's (a partner's session): nudges keep each set's own unit. */
     val keepSetUnits: Boolean = false,
+    /** The unfinished exercises' new order (their ids), after a drag; null where the list can't be reordered. */
+    val onMove: ((List<String>) -> Unit)? = null,
 )
 
 /** An exercise in progress: its sets, with the current one raised and its −/+ nudges. */
 @Composable
-fun ActiveEntryCard(entry: WorkoutEntry, expanded: Boolean, lastLabel: String?, preferred: WeightUnit, actions: EntryActions, modifier: Modifier = Modifier) {
+fun ActiveEntryCard(
+    entry: WorkoutEntry,
+    expanded: Boolean,
+    lastLabel: String?,
+    preferred: WeightUnit,
+    actions: EntryActions,
+    modifier: Modifier = Modifier,
+    /** The drag grip, when the card can be reordered; it leads the header. */
+    grip: (@Composable () -> Unit)? = null,
+) {
     val c = Volum.colors
     val doneCount = entry.sets.count { it.done }
     val current = entry.sets.indexOfFirst { !it.done }
@@ -149,7 +160,8 @@ fun ActiveEntryCard(entry: WorkoutEntry, expanded: Boolean, lastLabel: String?, 
         val gap by androidx.compose.animation.core.animateDpAsState(if (expanded) 10.dp else 0.dp, Springs.settle(), label = "header gap")
         // The spring overshoots past 0 as it closes, and padding can't be negative.
         // No end padding: the buttons' 48 dp touch targets leave their circles 5 dp in from the edge.
-        Row(Modifier.fillMaxWidth().padding(start = 8.dp, bottom = gap.coerceAtLeast(0.dp)), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(start = if (grip != null) 0.dp else 8.dp, bottom = gap.coerceAtLeast(0.dp)), verticalAlignment = Alignment.CenterVertically) {
+            grip?.invoke()
             Column(Modifier.weight(1f).tappable(highlight = false) { actions.onExpand(entry) }) {
                 Txt(entry.name, size = T.Big, weight = Bold, maxLines = 2)
                 Spacer(Modifier.height(2.dp))

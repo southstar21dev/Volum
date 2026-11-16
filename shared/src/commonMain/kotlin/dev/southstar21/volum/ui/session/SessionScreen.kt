@@ -11,6 +11,17 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.zIndex
+import dev.southstar21.volum.ui.components.Reorder
+import dev.southstar21.volum.ui.components.ReorderAutoScroll
+import dev.southstar21.volum.ui.components.reorderGrip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
@@ -118,13 +129,41 @@ fun SessionBody(
     bottomSpace: androidx.compose.ui.unit.Dp,
 ) {
     val c = Volum.colors
-    val active = workout.entries.filterNot { it.isComplete() }
+    val scope = rememberCoroutineScope()
+    val reorder = remember { Reorder(scope) }
+    // While a card is dragged, and until the saved order comes back from the store, the unfinished
+    // cards follow this draft of their ids instead of the workout.
+    val draft = remember { mutableStateListOf<String>() }
+    val stored = workout.entries.filterNot { it.isComplete() }
+    val active = if (draft.isEmpty()) stored else orderedBy(stored, draft)
     val completed = workout.entries.filter { it.isComplete() }
-    val current = active.firstOrNull()
+    // The open card stays put while one is dragged: a card opening or closing mid-drag would throw off
+    // the heights the swaps are measured by.
+    val current = (if (reorder.draggingId != null) stored else active).firstOrNull()
+    val activeIds = active.map { it.id }
+    val storedIds = stored.map { it.id }
+    LaunchedEffect(storedIds, reorder.draggingId) {
+        if (reorder.draggingId == null && draft.isNotEmpty() && draft.toList() == storedIds) draft.clear()
+    }
+    val onMove = actions.onMove?.takeIf { active.size > 1 }
+    val latestIds by rememberUpdatedState(activeIds)
+    val storedNow by rememberUpdatedState(storedIds)
+    fun latestStoredIds() = storedNow
+    val latestMove by rememberUpdatedState(onMove)
+    fun moveBy(id: String, by: Int) {
+        val ids = latestIds.toMutableList()
+        val from = ids.indexOf(id)
+        val to = (from + by).coerceIn(0, ids.lastIndex)
+        if (from < 0 || to == from) return
+        ids.add(to, ids.removeAt(from))
+        latestMove?.invoke(ids)
+    }
+    val scroll = rememberScrollState()
+    var viewport by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val shown = expandedId ?: current?.id
     // What was finished before this screen opened, so only exercises completed now celebrate.
     val alreadyDone = remember(workout.id) { completed.map { it.id }.toSet() }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    Column(Modifier.fillMaxSize().onGloballyPositioned { viewport = it }.verticalScroll(scroll)) {
         TopInset(10.dp)
         toolbar()
         heading()
@@ -187,10 +226,52 @@ fun SessionBody(
                 exit = fadeOut(tween(Durations.Exit)) + shrinkVertically(Springs.settle(), shrinkTowards = Alignment.Top),
             ) { Box(Modifier.padding(bottom = 12.dp)) { allDone() } }
             // A finished exercise folds out of the list (it reappears under Completed); one added rises in.
-            AnimatedItems(active, key = { it.id }) { e ->
-                ActiveEntryCard(e, expanded = e.id == shown, lastLabel = lastLabels[e.exerciseId], preferred = preferred, actions = actions, modifier = Modifier.padding(bottom = 12.dp))
+            AnimatedItems(
+                active,
+                key = { it.id },
+                itemModifier = { e -> Modifier.zIndex(if (reorder.draggingId == e.id) 1f else 0f) },
+            ) { e ->
+                val dragging = reorder.draggingId == e.id
+                val lift by animateFloatAsState(if (dragging) 1f else 0f, Springs.settle(), label = "lift")
+                val index = activeIds.indexOf(e.id)
+                Box(
+                    Modifier
+                        .then(if (onMove == null) Modifier else Modifier.semantics {
+                            customActions = buildList {
+                                if (index > 0) add(CustomAccessibilityAction("Move ${e.name} up") { moveBy(e.id, -1); true })
+                                if (index < activeIds.lastIndex) add(CustomAccessibilityAction("Move ${e.name} down") { moveBy(e.id, 1); true })
+                            }
+                        })
+                        // Measured with its gap below, so the drag's swaps step a whole card.
+                        .onSizeChanged { reorder.heights[e.id] = it.height }
+                        .graphicsLayer {
+                            translationY = reorder.offsetOf(e.id)
+                            val s = 1f + 0.025f * lift
+                            scaleX = s; scaleY = s
+                        }
+                        .padding(bottom = 12.dp),
+                ) {
+                    ActiveEntryCard(
+                        e, expanded = e.id == shown, lastLabel = lastLabels[e.exerciseId], preferred = preferred, actions = actions,
+                        grip = if (onMove == null) null else ({
+                            Box(
+                                Modifier.size(40.dp).reorderGrip(
+                                    reorder, e.id,
+                                    onStart = { if (draft.isEmpty()) draft.addAll(latestIds) },
+                                    onDrag = { dy -> reorder.dragBy(dy, draft) { it } },
+                                    onDrop = {
+                                        val ids = draft.toList()
+                                        if (ids == latestStoredIds()) draft.clear() else latestMove?.invoke(ids)
+                                    },
+                                ),
+                                contentAlignment = Alignment.Center,
+                            ) { Icon(Icons.Grip, if (dragging) c.accent else c.mute, size = 18.dp, contentDescription = "Reorder ${e.name}") }
+                        }),
+                    )
+                }
             }
         }
+        ReorderAutoScroll(reorder, scroll, { viewport }) { moved -> reorder.dragBy(moved, draft) { it } }
         AnimatedVisibility(completed.isNotEmpty(), enter = fadeIn() + expandVertically(Springs.settle()), exit = fadeOut() + shrinkVertically(Springs.settle())) {
             Column {
                 SectionTitle("Completed")
@@ -271,6 +352,8 @@ fun SessionScreen(workoutId: String) {
     fun replaceSet(entry: WorkoutEntry, set: SetEntry) = latest().map { e -> if (e.id == entry.id) e.copy(sets = e.sets.map { if (it.id == set.id) set else it }) else e }
 
     val routine = workout.routineId?.let { routines[it] }
+    // The routine in this session's order, when that's a change: offered from the workout menu.
+    val routineOrder = routine?.let { r -> applyOrderToRoutine(r.items, workout.entries).takeIf { it != r.items } }
     val library = remember(exercises) { exercises.values.filter { !it.deleted } }
     val lastLabels = remember(workouts) { repo.lastTopSetLabels(workout.entries.map { it.exerciseId to it.isTimed }) }
 
@@ -290,6 +373,7 @@ fun SessionScreen(workoutId: String) {
         },
         onMenu = { menuEntry = it },
         onExpand = { e -> expandedId = if (expandedId == e.id) null else e.id },
+        onMove = { ids -> save(reorderActive(latest(), ids)) },
     )
 
     val totalSets = workout.entries.sumOf { it.sets.size }
@@ -459,8 +543,13 @@ fun SessionScreen(workoutId: String) {
     ActionSheet(
         open = workoutMenu,
         title = workout.routineName,
-        actions = listOf(
+        actions = listOfNotNull(
             SheetAction("Rename workout", Icons.Pencil) { renameWorkout = true },
+            if (routine != null && routineOrder != null) {
+                SheetAction("Save order to routine", Icons.Grip, subtitle = "${routine.name} starts in this order next time") {
+                    scope.launch { repo.saveRoutine(routine.id, routine.name, routineOrder) }
+                }
+            } else null,
             SheetAction("Discard workout", Icons.Trash, destructive = true) { discardPrompt = true },
         ),
         onDismiss = { workoutMenu = false },
@@ -503,7 +592,7 @@ fun SessionScreen(workoutId: String) {
  * from the start don't animate.
  */
 @Composable
-fun <T> AnimatedItems(items: List<T>, key: (T) -> String, content: @Composable (T) -> Unit) {
+fun <T> AnimatedItems(items: List<T>, key: (T) -> String, itemModifier: (T) -> Modifier = { Modifier }, content: @Composable (T) -> Unit) {
     val initial = remember { items.map(key).toSet() }
     val states = remember { mutableMapOf<String, MutableTransitionState<Boolean>>() }
     val last = remember { mutableMapOf<String, T>() }
@@ -526,6 +615,7 @@ fun <T> AnimatedItems(items: List<T>, key: (T) -> String, content: @Composable (
                 visibleState = st,
                 enter = fadeIn(tween(Durations.Fade, delayMillis = Durations.Instant)) + expandVertically(Springs.settle(), expandFrom = Alignment.Top),
                 exit = fadeOut(tween(Durations.Exit)) + shrinkVertically(Springs.settle(), shrinkTowards = Alignment.Top),
+                modifier = itemModifier(item),
             ) { content(item) }
         }
     }
