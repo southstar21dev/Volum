@@ -287,8 +287,9 @@ class Repository(val store: LocalStore, val owner: String) {
     private var lastEntries: Map<String, WorkoutEntry> = emptyMap()
 
     /**
-     * Each exercise's entry in its last completed session, built in one pass over the history and
-     * kept until the workouts change (lists ask for it once per row).
+     * Each exercise's entry in the last completed session it was performed in, built in one pass over
+     * the history and kept until the workouts change (lists ask for it once per row). A skipped entry,
+     * or one finished without a logged working set, has nothing to carry forward and is passed over.
      */
     fun lastEntries(): Map<String, WorkoutEntry> {
         val workouts = store.workouts.value
@@ -301,13 +302,13 @@ class Repository(val store: LocalStore, val owner: String) {
         val out = HashMap<String, WorkoutEntry>()
         completed
             .sortedByDescending { it.finishedAt ?: "" }
-            .forEach { w -> for (e in w.entries) if (e.exerciseId !in out) out[e.exerciseId] = e }
+            .forEach { w -> for (e in w.entries) if (e.exerciseId !in out && e.wasPerformed()) out[e.exerciseId] = e }
         lastEntries = out
         lastEntriesCompleted = completed
         return lastEntries
     }
 
-    /** The last completed session's entry for [exerciseId], if any. */
+    /** [exerciseId]'s entry in the last completed session it was performed in, if any. */
     fun lastEntryFor(exerciseId: String): WorkoutEntry? = lastEntries()[exerciseId]
 
     fun buildSessionEntries(routine: Routine, preferred: WeightUnit): List<WorkoutEntry> =
