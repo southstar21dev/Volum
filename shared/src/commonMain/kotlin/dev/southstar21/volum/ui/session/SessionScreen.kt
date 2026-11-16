@@ -356,6 +356,21 @@ fun SessionScreen(workoutId: String) {
     val routine = workout.routineId?.let { routines[it] }
     // The routine in this session's order, when that's a change: offered from the workout menu.
     val routineOrder = routine?.let { r -> applyOrderToRoutine(r.items, workout.entries).takeIf { it != r.items } }
+    var orderPrompt by remember { mutableStateOf(false) }
+    fun finish(saveOrder: Boolean) {
+        haptic(Haptic.WorkoutDone)
+        val r = routine
+        val order = routineOrder
+        leave {
+            if (saveOrder && r != null && order != null) repo.saveRoutine(r.id, r.name, order)
+            repo.finishWorkout(workouts[workoutId] ?: workout)
+        }
+    }
+    // Finishing a workout whose exercises were moved first asks whether the routine should keep the order.
+    fun finish() {
+        if (routine != null && routineOrder != null) { haptic(Haptic.Tap); orderPrompt = true }
+        else finish(saveOrder = false)
+    }
     val library = remember(exercises) { exercises.values.filter { !it.deleted } }
     val lastLabels = remember(workouts) { repo.lastTopSetLabels(workout.entries.map { it.exerciseId to it.isTimed }) }
 
@@ -446,7 +461,7 @@ fun SessionScreen(workoutId: String) {
                             ElapsedMinutesStat(workout.startedAt, Modifier.weight(1f))
                         }
                         Spacer(Modifier.height(16.dp))
-                        PrimaryButton("Finish workout", haptic = false) { haptic(Haptic.WorkoutDone); leave { repo.finishWorkout(workouts[workoutId] ?: workout) } }
+                        PrimaryButton("Finish workout", haptic = false) { finish() }
                     }
                 }
             },
@@ -468,7 +483,7 @@ fun SessionScreen(workoutId: String) {
             Box(
                 Modifier.weight(1f).height(58.dp).tappable {
                     if (unlogged > 0) { haptic(Haptic.Tap); finishPrompt = true }
-                    else { haptic(Haptic.WorkoutDone); leave { repo.finishWorkout(workouts[workoutId] ?: workout) } }
+                    else finish()
                 }.accentGel(RoundedCornerShape(29.dp)),
                 contentAlignment = Alignment.Center,
             ) { Txt("Finish workout", size = T.BodyLarge, weight = Bold, color = c.onAccent) }
@@ -595,9 +610,20 @@ fun SessionScreen(workoutId: String) {
         subtitle = "Unlogged sets won't count.",
         actions = listOf(
             SheetAction("Log them", Icons.Check) {},
-            SheetAction("Finish anyway", Icons.ArrowRight) { haptic(Haptic.WorkoutDone); leave { repo.finishWorkout(workouts[workoutId] ?: workout) } },
+            SheetAction("Finish anyway", Icons.ArrowRight) { finish() },
         ),
         onDismiss = { finishPrompt = false },
+    )
+    val promptName = rememberLast(routine?.name)
+    ActionSheet(
+        open = orderPrompt,
+        title = "Keep this order in ${promptName ?: "the routine"}?",
+        subtitle = "You moved exercises around in this workout.",
+        actions = listOf(
+            SheetAction("Save order and finish", Icons.Check, subtitle = "${promptName ?: "The routine"} starts in this order next time") { finish(saveOrder = true) },
+            SheetAction("Just finish", Icons.ArrowRight) { finish(saveOrder = false) },
+        ),
+        onDismiss = { orderPrompt = false },
     )
     ConfirmSheet(
         open = discardPrompt,
