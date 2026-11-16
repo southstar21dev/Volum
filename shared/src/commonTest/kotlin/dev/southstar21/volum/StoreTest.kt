@@ -2,7 +2,11 @@ package dev.southstar21.volum
 
 import dev.southstar21.volum.data.LocalStore
 import dev.southstar21.volum.data.Repository
+import dev.southstar21.volum.model.Routine
+import dev.southstar21.volum.model.RoutineItem
+import dev.southstar21.volum.model.SetEntry
 import dev.southstar21.volum.model.VolumJson
+import dev.southstar21.volum.model.WeightUnit
 import dev.southstar21.volum.model.Workout
 import dev.southstar21.volum.model.WorkoutEntry
 import dev.southstar21.volum.model.WorkoutStatus
@@ -48,18 +52,56 @@ class StoreTest {
         assertEquals(2, store.outbox.value.size)
     }
 
+    @Test fun aReplacedOutboxItemKeepsWhenTheRecordStartedWaiting() = runTest {
+        val store = LocalStore(tempDir(), backgroundScope)
+        val first = "2026-01-01T10:00:00.000Z"
+        store.transaction { replaceOutbox("workouts", "w", { id -> dev.southstar21.volum.model.OutboxItem(id, "workouts", "w", kotlinx.serialization.json.JsonObject(emptyMap()), first) }) }
+        store.transaction { replaceOutbox("workouts", "w", { id -> dev.southstar21.volum.model.OutboxItem(id, "workouts", "w", kotlinx.serialization.json.JsonObject(emptyMap()), "2026-01-01T10:00:09.000Z") }) }
+        val item = store.outbox.value.single()
+        assertEquals(2L, item.id)
+        assertEquals(first, item.createdAt)
+    }
+
     @Test fun lastEntryComesFromTheNewestCompletedSession() = runTest {
         val store = LocalStore(tempDir(), backgroundScope)
         val repo = Repository(store, "me")
         store.transaction {
-            putWorkout(completed("w1", "2026-01-01T10:00:00.000Z", WorkoutEntry("old", "x", "Bench")))
-            putWorkout(completed("w2", "2026-01-08T10:00:00.000Z", WorkoutEntry("new", "x", "Bench")))
+            putWorkout(completed("w1", "2026-01-01T10:00:00.000Z", bench("old", 50.0, 5)))
+            putWorkout(completed("w2", "2026-01-08T10:00:00.000Z", bench("new", 55.0, 5)))
         }
         assertEquals("new", repo.lastEntryFor("x")?.id)
         assertNull(repo.lastEntryFor("y"))
         // The cache follows the store.
-        store.transaction { putWorkout(completed("w3", "2026-01-15T10:00:00.000Z", WorkoutEntry("newest", "x", "Bench"))) }
+        store.transaction { putWorkout(completed("w3", "2026-01-15T10:00:00.000Z", bench("newest", 60.0, 5))) }
         assertEquals("newest", repo.lastEntryFor("x")?.id)
+    }
+
+    private fun bench(id: String, weight: Double, reps: Int, done: Boolean = true, skipped: Boolean? = null) =
+        WorkoutEntry(id, "x", "Bench", skipped = skipped, sets = listOf(SetEntry("$id-s", weight = weight, reps = reps, done = done)))
+
+    @Test fun aSkippedExerciseStartsFromItsLastPerformedSession() = runTest {
+        val store = LocalStore(tempDir(), backgroundScope)
+        val repo = Repository(store, "me")
+        store.transaction {
+            putWorkout(completed("w1", "2026-01-01T10:00:00.000Z", bench("done", 60.0, 5)))
+            // Skipped, with the sets it was prefilled with left unticked.
+            putWorkout(completed("w2", "2026-01-08T10:00:00.000Z", bench("skipped", 60.0, 5, done = false, skipped = true)))
+        }
+        assertEquals("done", repo.lastEntryFor("x")?.id)
+        val routine = Routine("r", "me", "Push", listOf(RoutineItem("i", "x", "Bench", 3, 8)), "2026-01-01T10:00:00.000Z")
+        val set = repo.buildSessionEntries(routine, WeightUnit.Kg).single().sets.single()
+        assertEquals(60.0, set.weight)
+        assertEquals(5, set.reps)
+    }
+
+    @Test fun anExerciseFinishedWithNothingLoggedIsPassedOver() = runTest {
+        val store = LocalStore(tempDir(), backgroundScope)
+        val repo = Repository(store, "me")
+        store.transaction {
+            putWorkout(completed("w1", "2026-01-01T10:00:00.000Z", bench("done", 60.0, 5)))
+            putWorkout(completed("w2", "2026-01-08T10:00:00.000Z", bench("untouched", 0.0, 8, done = false)))
+        }
+        assertEquals("done", repo.lastEntryFor("x")?.id)
     }
 
     @Test fun writesReachDiskAndReload() = runTest {

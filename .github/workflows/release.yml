@@ -13,7 +13,18 @@ on:
     # The server (backend/) deploys separately; a push that only touches it is not an app release.
     paths-ignore: ["backend/**"]
   # Republishes the AltStore/SideStore sources without releasing, e.g. after editing a release.
+  # With testflight checked, it instead uploads an existing release to TestFlight:
+  #   gh workflow run release.yml --ref master -f testflight=true [-f version=1.2.3]
   workflow_dispatch:
+    inputs:
+      testflight:
+        description: Upload an existing release to TestFlight instead of republishing the sources
+        type: boolean
+        default: false
+      version:
+        description: Release to upload, e.g. 1.2.3 (default the latest release)
+        type: string
+        default: ""
 
 concurrency:
   group: release-${{ github.ref }}
@@ -115,7 +126,8 @@ jobs:
 
   # Sends the released version to TestFlight: a signed App Store build of the same commit and
   # version as the GitHub release (the AltStore IPA stays unsigned). Runs only after a release was
-  # published, so TestFlight never gets a build that wasn't released. Signing is cloud-managed:
+  # published, or by hand for an existing release (see workflow_dispatch above), and always builds
+  # the release's tag, so TestFlight never gets a build that wasn't released. Signing is cloud-managed:
   # xcodebuild fetches the distribution certificate and profiles with the App Store Connect API key,
   # so no certificate is stored here. Skipped (with a note in the summary) until these secrets exist:
   #   ASC_KEY_ID      the key's ID
@@ -126,11 +138,14 @@ jobs:
   testflight:
     name: TestFlight
     needs: release
-    if: ${{ !cancelled() && needs.release.result == 'success' && needs.release.outputs.version != '' }}
+    if: >-
+      ${{ !cancelled()
+      && ((needs.release.result == 'success' && needs.release.outputs.version != '')
+          || (github.event_name == 'workflow_dispatch' && inputs.testflight)) }}
     runs-on: macos-26
     timeout-minutes: 60
     env:
-      VERSION: ${{ needs.release.outputs.version }}
+      VERSION: ${{ needs.release.outputs.version || inputs.version }}
       TEAM_ID: 3HNYQ2F575
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -146,9 +161,19 @@ jobs:
             echo "TestFlight upload skipped: set ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 to enable it." >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # A manual run without a version takes the latest release. Either way the release must exist.
+      - if: steps.key.outputs.ok == 'true'
+        name: Resolve the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=$(gh release view ${VERSION:+"v$VERSION"} -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
       - if: steps.key.outputs.ok == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: v${{ env.VERSION }}
           persist-credentials: false
 
       - if: steps.key.outputs.ok == 'true'
@@ -228,7 +253,7 @@ jobs:
     needs: release
     # Runs after every release attempt, cheap even when nothing was released. GitHub Pages needs a
     # public repo on the free plan, so this skips while the repo is private.
-    if: ${{ !cancelled() && !github.event.repository.private && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
+    if: ${{ !cancelled() && !github.event.repository.private && !inputs.testflight && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

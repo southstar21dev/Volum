@@ -86,3 +86,6 @@ actual fun isReduceMotionEnabled(): Boolean = runCatching {
         1f,
     ) == 0f
 }.getOrDefault(false)
+
+/** Android installs come from the GitHub release (directly or through Obtainium). */
+actual fun updateTarget(): UpdateTarget = UpdateTarget("Get the update", "https://github.com/southstar21dev/Volum/releases/latest")

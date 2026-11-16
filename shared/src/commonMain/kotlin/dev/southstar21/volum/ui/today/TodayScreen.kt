@@ -93,6 +93,7 @@ import dev.southstar21.volum.ui.components.Txt
 import dev.southstar21.volum.ui.components.accentGel
 import dev.southstar21.volum.ui.components.glassCard
 import dev.southstar21.volum.ui.components.liquidGlass
+import dev.southstar21.volum.ui.components.StatusBanner
 import dev.southstar21.volum.ui.components.milky
 import dev.southstar21.volum.ui.components.GlassBadge
 import dev.southstar21.volum.ui.components.SheetActionRow
@@ -213,15 +214,7 @@ fun TodayScreen() {
         }
 
         if (sync.state == SyncState.Offline) {
-            Row(
-                Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp).fillMaxWidth().height(48.dp).liquidGlass(RoundedCornerShape(24.dp)).padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Icon(Icons.CloudOff, c.ink, size = 20.dp)
-                Txt("Offline.", size = T.Label, weight = Bold)
-                Mute("Changes are saved on this phone.", size = T.Label, maxLines = 1)
-            }
+            StatusBanner(Icons.CloudOff, "Offline.", "Changes are saved on this phone.", Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp))
         }
 
         ownActive?.let { w ->

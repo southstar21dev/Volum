@@ -54,3 +54,14 @@ actual fun haptic(kind: Haptic) {
 }
 
 actual fun isReduceMotionEnabled(): Boolean = platform.UIKit.UIAccessibilityIsReduceMotionEnabled()
+
+/**
+ * A TestFlight build is signed by Apple and carries no provisioning profile; one installed through
+ * AltStore or SideStore (or from Xcode) does, and updates from the AltStore source page instead.
+ */
+actual fun updateTarget(): UpdateTarget =
+    if (platform.Foundation.NSBundle.mainBundle.pathForResource("embedded", ofType = "mobileprovision") == null) {
+        UpdateTarget("Open TestFlight", "itms-beta://")
+    } else {
+        UpdateTarget("Get the update", "https://southstar21dev.github.io/Volum/")
+    }

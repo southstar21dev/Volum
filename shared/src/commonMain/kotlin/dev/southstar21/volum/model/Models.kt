@@ -99,6 +99,9 @@ data class WorkoutEntry(
 ) {
     val isSkipped: Boolean get() = skipped == true
     val isTimed: Boolean get() = timed == true
+
+    /** Done for real: not skipped, and at least one working (non-warm-up) set logged. */
+    fun wasPerformed(): Boolean = !isSkipped && sets.any { it.done && it.tag != SetTag.Warmup }
 }
 
 @Serializable

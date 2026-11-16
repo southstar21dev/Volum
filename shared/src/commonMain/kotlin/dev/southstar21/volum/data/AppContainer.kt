@@ -10,6 +10,8 @@ import dev.southstar21.volum.model.Workout
 import dev.southstar21.volum.model.WorkoutEntry
 import dev.southstar21.volum.platform.SecureStore
 import dev.southstar21.volum.platform.appDataDirectory
+import dev.southstar21.volum.platform.appVersion
+import dev.southstar21.volum.platform.isIos
 import dev.southstar21.volum.platform.createHttpClient
 import dev.southstar21.volum.platform.pocketBaseUrl
 import dev.southstar21.volum.util.nowMillis
@@ -96,6 +98,9 @@ internal object PlatformSecrets : Secrets {
 /** How a sign-in check ended: the token is good, it was refused (signed out), or no answer came. */
 internal enum class AuthCheck { Valid, Invalid, Unknown }
 
+/** The server no longer accepts this build; [minVersion] is the oldest one it does, when it said. */
+data class UpdateRequired(val minVersion: String?)
+
 /** App-wide services. One per process; a [UserSession] is created per signed-in user. */
 class AppContainer internal constructor(
     private val root: Path,
@@ -104,7 +109,7 @@ class AppContainer internal constructor(
     internal val mainDispatcher: CoroutineDispatcher,
     private val ioDispatcher: CoroutineDispatcher,
 ) {
-    constructor() : this(Path(appDataDirectory()), PocketBase(pocketBaseUrl, createHttpClient()), PlatformSecrets, Dispatchers.Main, Dispatchers.IO)
+    constructor() : this(Path(appDataDirectory()), PocketBase(pocketBaseUrl, createHttpClient(), appVersion, if (isIos) "ios" else "android"), PlatformSecrets, Dispatchers.Main, Dispatchers.IO)
 
     val scope = CoroutineScope(SupervisorJob() + mainDispatcher + backstop)
 
@@ -125,6 +130,10 @@ class AppContainer internal constructor(
     private val _ready = MutableStateFlow(false)
     val ready: StateFlow<Boolean> = _ready.asStateFlow()
 
+    /** Set once the server has refused this build as too old; the app then shows only the update screen. */
+    private val _updateRequired = MutableStateFlow<UpdateRequired?>(null)
+    val updateRequired: StateFlow<UpdateRequired?> = _updateRequired.asStateFlow()
+
     /** One session at a time: a second login waits for the first to finish opening, then replaces it. */
     private val sessionLock = Mutex()
 
@@ -143,6 +152,7 @@ class AppContainer internal constructor(
     private var closing: Job? = null
 
     init {
+        pb.onUpdateRequired = { minVersion -> _updateRequired.value = UpdateRequired(minVersion) }
         scope.launch(ioDispatcher) {
             for (write in diskWrites) {
                 try {
@@ -286,6 +296,23 @@ class AppContainer internal constructor(
         val updated = userOf(record)
         persistAuth(pb.token ?: return, updated)
         _session.value?.user = updated
+    }
+
+    /**
+     * Asks the server whether this build is still supported. Sync finds out by itself; this covers a
+     * signed-out app, and lifts the block again if the server's minimum was lowered. Offline is no answer.
+     */
+    fun checkUpdateRequired() {
+        scope.launch {
+            try {
+                pb.send("/api/health")
+                _updateRequired.value = null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: PbException) {
+                // A 426 has already set the flag (PocketBase.onUpdateRequired); anything else changes nothing.
+            }
+        }
     }
 
     /**
