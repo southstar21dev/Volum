@@ -8,6 +8,7 @@ import dev.southstar21.volum.model.VolumJson
 import dev.southstar21.volum.model.Workout
 import dev.southstar21.volum.model.WorkoutStatus
 import dev.southstar21.volum.util.nowIso
+import dev.southstar21.volum.util.nowMillis
 import dev.southstar21.volum.util.parseTime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -77,6 +78,10 @@ class SyncEngine(
 ) {
     private val _status = MutableStateFlow(SyncStatus(lastSyncedAt = store.meta.value["lastSyncedAt"]))
     val status: StateFlow<SyncStatus> = _status.asStateFlow()
+
+    private val _lastPulledAt = MutableStateFlow<Long?>(null)
+    /** When a pull last came back from the server (epoch ms), this run of the app; null before the first. */
+    val lastPulledAt: StateFlow<Long?> = _lastPulledAt.asStateFlow()
 
     private val running = Mutex()
     private var rerun = false
@@ -155,6 +160,7 @@ class SyncEngine(
                 if (pullBeforePush()) pullCollection(Collection.Workouts)
                 val failed = pushOutbox()
                 pullAll()
+                _lastPulledAt.value = nowMillis()
                 if (failed > 0) {
                     val message = store.outbox.value.firstOrNull { it.failed }?.lastError ?: "Some changes were rejected"
                     store.transaction { putMeta("lastError", message) }

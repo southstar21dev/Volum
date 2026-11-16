@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.graphicsLayer
@@ -20,6 +21,7 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.zIndex
 import dev.southstar21.volum.ui.components.Reorder
+import dev.southstar21.volum.data.SyncState
 import dev.southstar21.volum.ui.components.ReorderAutoScroll
 import dev.southstar21.volum.ui.components.reorderGrip
 import androidx.compose.ui.draw.drawBehind
@@ -382,6 +384,17 @@ fun SessionScreen(workoutId: String) {
     val unlogged = workout.entries.filterNot { it.isSkipped }.sumOf { e -> e.sets.count { !it.done } }
     val partner = partnerSnap.partner
     val partnerWorkout = partnerSnap.activeWorkout
+    // How this workout's sync is keeping up, for the slow-connection banner (only when paired).
+    val outbox by session.store.outbox.collectAsStateWithLifecycle()
+    val pendingSince = remember(outbox) { outbox.filter { it.recordId == workoutId && !it.failed }.minOfOrNull { parseTime(it.createdAt) } }
+    val lastPulledAt by session.sync.lastPulledAt.collectAsStateWithLifecycle()
+    val syncStatus by session.sync.status.collectAsStateWithLifecycle()
+    // The sync only polls while the app is on screen, so the wait for news starts again on return.
+    var openedAt by remember { mutableStateOf(nowMillis()) }
+    LifecycleStartEffect(Unit) {
+        openedAt = nowMillis()
+        onStopOrDispose {}
+    }
 
     Box(Modifier.fillMaxSize()) {
         SessionBody(
@@ -407,6 +420,16 @@ fun SessionScreen(workoutId: String) {
                 Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp).tappable(highlight = false, onClickLabel = "Rename workout") { renameWorkout = true }) {
                     ScreenTitle(workout.routineName)
                     Mute("$doneSets of $totalSets sets · $doneEntries of ${plural(workout.entries.size, "exercise")}", size = T.Body)
+                }
+                if (partner != null) {
+                    // Your partner's edits reach you with the 10 s poll: two missed in a row is slow.
+                    SyncLagBanner(
+                        partner.displayName,
+                        offline = syncStatus.state == SyncState.Offline,
+                        pendingSince = pendingSince,
+                        lastHeardAt = maxOf(lastPulledAt ?: 0L, openedAt),
+                        staleAfterMs = 25_000,
+                    )
                 }
             },
             allDone = {

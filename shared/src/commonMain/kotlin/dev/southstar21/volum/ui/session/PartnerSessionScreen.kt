@@ -66,6 +66,8 @@ import dev.southstar21.volum.ui.theme.Icons
 import dev.southstar21.volum.ui.theme.Volum
 import dev.southstar21.volum.util.plural
 import kotlinx.coroutines.CancellationException
+import androidx.compose.runtime.mutableLongStateOf
+import dev.southstar21.volum.util.nowMillis
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -94,7 +96,12 @@ fun PartnerSessionScreen(workoutId: String) {
     // Edits sent but not yet answered. While any are out, server copies (polls, live events, earlier
     // answers) predate them and would briefly undo them on screen, so only the last answer lands.
     val inFlight = remember { intArrayOf(0) }
+    // For the slow-connection banner: since when the oldest unanswered edit has waited, and when the
+    // server last sent the workout (a poll, a live event or an answer).
+    var waitingSince by remember { mutableStateOf<Long?>(null) }
+    var lastHeardAt by remember { mutableLongStateOf(nowMillis()) }
     fun receive(w: Workout) {
+        lastHeardAt = nowMillis()
         if (w.status != WorkoutStatus.Active || w.deleted) ended = true
         else if (inFlight[0] == 0) { workout = w; error = null }
     }
@@ -117,6 +124,8 @@ fun PartnerSessionScreen(workoutId: String) {
     }
     // Polled and followed live only while the app is on screen.
     LifecycleStartEffect(workoutId) {
+        // Nothing was asked for while away: the wait for news starts again now.
+        lastHeardAt = nowMillis()
         val poll = scope.launch {
             while (true) {
                 load()
@@ -133,11 +142,11 @@ fun PartnerSessionScreen(workoutId: String) {
     fun mutate(m: WorkoutMutation) {
         val current = workout ?: return
         workout = current.copy(entries = applyWorkoutMutation(current.entries, m))
-        inFlight[0]++
+        if (inFlight[0]++ == 0) waitingSince = nowMillis()
         scope.launch {
             try {
                 // Counted down however the call ends, or receive() would ignore every later server copy.
-                val answer = try { session.partner.mutate(workoutId, m) } finally { inFlight[0]-- }
+                val answer = try { session.partner.mutate(workoutId, m) } finally { if (--inFlight[0] == 0) waitingSince = null }
                 answer?.let(::receive)
             } catch (e: CancellationException) {
                 throw e
@@ -214,6 +223,8 @@ fun PartnerSessionScreen(workoutId: String) {
                         }
                     }
                     error?.let { ErrorText(it, Modifier.padding(start = 20.dp, top = 8.dp)) }
+                    // The screen polls every 4 s: three missed in a row is slow. An error already says why.
+                    if (error == null) SyncLagBanner(partnerName, offline = false, pendingSince = waitingSince, lastHeardAt = lastHeardAt, staleAfterMs = 12_000)
                 },
                 allDone = {
                     dev.southstar21.volum.ui.components.GlassCard(Modifier.fillMaxWidth()) {

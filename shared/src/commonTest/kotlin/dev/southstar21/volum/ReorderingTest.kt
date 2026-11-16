@@ -80,3 +80,17 @@ class ReorderingTest {
         r.drop()
     }
 }
+
+class SyncLagTest {
+    @Test fun anEditWaitingSixSecondsIsSlow() {
+        val now = 100_000L
+        assertFalse(dev.southstar21.volum.ui.session.syncLagging(now, pendingSince = now - 5_999, lastHeardAt = now, staleAfterMs = 25_000))
+        assertTrue(dev.southstar21.volum.ui.session.syncLagging(now, pendingSince = now - 6_000, lastHeardAt = now, staleAfterMs = 25_000))
+    }
+
+    @Test fun hearingNothingForTooLongIsSlow() {
+        val now = 100_000L
+        assertFalse(dev.southstar21.volum.ui.session.syncLagging(now, pendingSince = null, lastHeardAt = now - 25_000, staleAfterMs = 25_000))
+        assertTrue(dev.southstar21.volum.ui.session.syncLagging(now, pendingSince = null, lastHeardAt = now - 25_001, staleAfterMs = 25_000))
+    }
+}

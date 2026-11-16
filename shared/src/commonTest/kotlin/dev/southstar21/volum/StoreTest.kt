@@ -52,6 +52,16 @@ class StoreTest {
         assertEquals(2, store.outbox.value.size)
     }
 
+    @Test fun aReplacedOutboxItemKeepsWhenTheRecordStartedWaiting() = runTest {
+        val store = LocalStore(tempDir(), backgroundScope)
+        val first = "2026-01-01T10:00:00.000Z"
+        store.transaction { replaceOutbox("workouts", "w", { id -> dev.southstar21.volum.model.OutboxItem(id, "workouts", "w", kotlinx.serialization.json.JsonObject(emptyMap()), first) }) }
+        store.transaction { replaceOutbox("workouts", "w", { id -> dev.southstar21.volum.model.OutboxItem(id, "workouts", "w", kotlinx.serialization.json.JsonObject(emptyMap()), "2026-01-01T10:00:09.000Z") }) }
+        val item = store.outbox.value.single()
+        assertEquals(2L, item.id)
+        assertEquals(first, item.createdAt)
+    }
+
     @Test fun lastEntryComesFromTheNewestCompletedSession() = runTest {
         val store = LocalStore(tempDir(), backgroundScope)
         val repo = Repository(store, "me")
