@@ -67,6 +67,7 @@ import dev.southstar21.volum.util.convert
 import dev.southstar21.volum.util.formatSeconds
 import dev.southstar21.volum.util.formatWeightValue
 import dev.southstar21.volum.util.newId
+import dev.southstar21.volum.util.plural
 
 fun WorkoutEntry.isComplete(): Boolean = isSkipped || (sets.isNotEmpty() && sets.all { it.done })
 
@@ -171,8 +172,10 @@ fun ActiveEntryCard(
                         Mute("Last time ", size = T.Small)
                         Txt(lastLabel, size = T.Small, weight = Bold, tabular = true)
                     }
-                    else -> Mute("$doneCount of ${entry.sets.size} sets" + (lastLabel?.let { " · Last $it" } ?: ""), size = T.Small, maxLines = 1)
+                    else -> Mute("$doneCount of ${entry.sets.size} sets" + (lastLabel?.let { ", last $it" } ?: ""), size = T.Small, maxLines = 1)
                 }
+                // The routine's note for this exercise: one quiet line, the whole note once opened.
+                if (!entry.isSkipped) entry.note?.trim()?.takeIf { it.isNotEmpty() }?.let { Mute(it, size = T.Small, maxLines = if (expanded) 3 else 1) }
             }
             CardCircleButton(Icons.More, "More options for ${entry.name}") { actions.onMenu(entry) }
             AnimatedVisibility(!expanded, enter = fadeIn() + androidx.compose.animation.expandHorizontally(), exit = fadeOut() + androidx.compose.animation.shrinkHorizontally()) {
@@ -383,7 +386,8 @@ internal fun nudgedSet(set: SetEntry, preferred: WeightUnit, keepSetUnits: Boole
 fun summaryOf(entry: WorkoutEntry, preferred: WeightUnit): String {
     val done = entry.sets.filter { it.done && it.tag != SetTag.Warmup }
     if (done.isEmpty()) return "${entry.sets.size} sets"
-    if (entry.isTimed) return "${done.size} sets · ${formatSeconds(done.maxOf { it.seconds ?: 0 })} best"
+    if (entry.isTimed) return "${done.size} sets, ${formatSeconds(done.maxOf { it.seconds ?: 0 })} best"
     val top = done.maxWith(topSetOrder(timed = false))
-    return "${done.size} sets · top ${formatWeightValue(top.weightIn(preferred))} ${preferred.label} × ${top.reps}"
+    if (top.weight == 0.0) return "${done.size} sets, top ${plural(top.reps, "rep")}"
+    return "${done.size} sets, top ${formatWeightValue(top.weightIn(preferred))} ${preferred.label} × ${top.reps}"
 }

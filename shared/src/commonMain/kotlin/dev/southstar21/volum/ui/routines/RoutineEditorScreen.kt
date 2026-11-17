@@ -185,7 +185,7 @@ fun RoutineEditorScreen(routineId: String?) {
         }
         Row(Modifier.padding(start = 22.dp, end = 22.dp, top = 18.dp, bottom = 10.dp).riseIn(), verticalAlignment = Alignment.Bottom) {
             Txt("Exercises", size = T.Subhead, weight = Bold)
-            AnimatedVisibility(items.size > 1, enter = fadeIn(), exit = fadeOut()) { Mute(" · hold the grip to reorder", size = T.Label) }
+            AnimatedVisibility(items.size > 1, enter = fadeIn(), exit = fadeOut()) { Mute(", hold the grip to reorder", size = T.Label) }
         }
         AnimatedVisibility(
             items.isNotEmpty(),

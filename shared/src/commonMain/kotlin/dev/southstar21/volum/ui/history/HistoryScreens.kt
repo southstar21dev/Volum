@@ -148,6 +148,7 @@ import kotlin.math.roundToInt
 @Composable
 fun HistoryScreen() {
     val session = LocalSession.current
+    val prefs by LocalApp.current.prefs.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     val workouts by session.workoutsState()
@@ -181,7 +182,7 @@ fun HistoryScreen() {
                     ScreenTitle("History")
                     Mute("${plural(inYear, "workout")} in ${today.year}", size = T.Body)
                 }
-                HeatmapCard(today, byDay) { day -> byDay[day]?.firstOrNull()?.let { nav.push(Route.WorkoutDetail(it.id)) } }
+                HeatmapCard(today, byDay, prefs.unit) { day -> byDay[day]?.firstOrNull()?.let { nav.push(Route.WorkoutDetail(it.id)) } }
                 if (completed.isEmpty()) {
                     GlassCard(Modifier.padding(16.dp).fillMaxWidth()) {
                         Txt("No workouts recorded", size = T.Subhead, weight = Bold)
@@ -200,7 +201,7 @@ fun HistoryScreen() {
                     Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().glassCard(RoundedCornerShape(24.dp)).padding(vertical = 2.dp)) {
                         list.forEachIndexed { i, w ->
                             if (i > 0) Divider(inset = 66.dp, end = 14.dp)
-                            WorkoutRow(w, onClick = { nav.push(Route.WorkoutDetail(w.id)) }, onLongClick = { deleteTargetId = w.id })
+                            WorkoutRow(w, prefs.unit, onClick = { nav.push(Route.WorkoutDetail(w.id)) }, onLongClick = { deleteTargetId = w.id })
                         }
                     }
                 }
@@ -220,11 +221,11 @@ fun HistoryScreen() {
 }
 
 @Composable
-private fun WorkoutRow(w: Workout, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun WorkoutRow(w: Workout, unit: dev.southstar21.volum.model.WeightUnit, onClick: () -> Unit, onLongClick: () -> Unit) {
     val c = Volum.colors
     val d = localDateOf(workoutTime(w))
     val sets = w.entries.sumOf { e -> e.sets.count { it.done } }
-    val volume = formatVolume(volumeKg(w))
+    val volume = formatVolume(volumeKg(w), unit)
     Row(
         Modifier.fillMaxWidth().tappable(onLongClick = onLongClick, onClick = onClick)
             // The long press, offered to screen readers by name.
@@ -239,7 +240,7 @@ private fun WorkoutRow(w: Workout, onClick: () -> Unit, onLongClick: () -> Unit)
         }
         Column(Modifier.weight(1f)) {
             Txt(w.routineName, size = T.Body, weight = Bold, maxLines = 1)
-            Mute(listOf(durationLabel(w.startedAt, w.finishedAt), plural(sets, "set")).filter { it.isNotEmpty() }.joinToString(" · "), size = T.Caption)
+            Mute(listOf(durationLabel(w.startedAt, w.finishedAt), plural(sets, "set")).filter { it.isNotEmpty() }.joinToString(", "), size = T.Caption)
         }
         Row(verticalAlignment = Alignment.Bottom) {
             Txt(volume.substringBeforeLast(' '), size = T.BodyLarge, weight = ExtraBold, tabular = true)
@@ -256,7 +257,7 @@ private const val HEAT_WEEKS = 20
  * trained day opens its workout.
  */
 @Composable
-private fun HeatmapCard(today: LocalDate, byDay: Map<LocalDate, List<Workout>>, onDay: (LocalDate) -> Unit) {
+private fun HeatmapCard(today: LocalDate, byDay: Map<LocalDate, List<Workout>>, unit: dev.southstar21.volum.model.WeightUnit, onDay: (LocalDate) -> Unit) {
     val c = Volum.colors
     val thisWeek = today.minus(DatePeriod(days = today.dayOfWeek.ordinal))
     val start = thisWeek.minus(DatePeriod(days = 7 * (HEAT_WEEKS - 1)))
@@ -284,7 +285,7 @@ private fun HeatmapCard(today: LocalDate, byDay: Map<LocalDate, List<Workout>>, 
             AnimatedNumber(stats.first.toDouble()) { HeatStat("${it.roundToInt()}", "", "week streak", Modifier.weight(1f)) }
             AnimatedNumber(stats.second) { avg -> HeatStat(formatWeightValue((avg * 10).roundToInt() / 10.0), "", "a week, avg", Modifier.weight(1f)) }
             AnimatedNumber(stats.third) { v ->
-                val vol = formatVolume(v)
+                val vol = formatVolume(v, unit)
                 HeatStat(vol.substringBeforeLast(' '), vol.substringAfterLast(' '), "this week", Modifier.weight(1f))
             }
         }
@@ -444,10 +445,10 @@ fun WorkoutDetailScreen(workoutId: String) {
         ) {
             Column(Modifier.weight(1f)) {
                 Txt(workout.routineName, size = T.Big, weight = ExtraBold, maxLines = 2)
-                Mute(listOf("${weekdayShort(d)} ${d.day} ${monthShort(d)}", duration, plural(sets, "set")).filter { it.isNotEmpty() }.joinToString(" · "), size = T.Small, maxLines = 1)
+                Mute(listOf("${weekdayShort(d)} ${d.day} ${monthShort(d)}", duration, plural(sets, "set")).filter { it.isNotEmpty() }.joinToString(", "), size = T.Small, maxLines = 1)
             }
             AnimatedNumber(volumeKg(workout)) { v ->
-                val volume = formatVolume(v)
+                val volume = formatVolume(v, prefs.unit)
                 Row(verticalAlignment = Alignment.Bottom) {
                     Txt(volume.substringBeforeLast(' '), size = T.Heading, weight = ExtraBold, tracking = (-0.02).em, tabular = true, maxLines = 1)
                     Txt(" " + volume.substringAfterLast(' '), Modifier.padding(bottom = 3.dp), size = T.Small, weight = Semibold, color = c.mute, maxLines = 1)
@@ -470,7 +471,11 @@ fun WorkoutDetailScreen(workoutId: String) {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Txt(entry.name, Modifier.weight(1f), size = T.Body, weight = Bold, maxLines = 2)
+                        Column(Modifier.weight(1f)) {
+                            Txt(entry.name, size = T.Body, weight = Bold, maxLines = 2)
+                            // The routine's note for this exercise, as it was when the workout started.
+                            entry.note?.trim()?.takeIf { it.isNotEmpty() }?.let { Mute(it, size = T.Small, maxLines = if (expanded) 3 else 1) }
+                        }
                         Mute(if (entry.isSkipped) "Skipped" else plural(done, "set"), size = T.Small, maxLines = 1)
                         Icon(Icons.ChevronDown, c.mute, Modifier.graphicsLayer { rotationZ = turn }, size = 18.dp)
                     }
@@ -556,6 +561,7 @@ private fun setText(set: SetEntry, timed: Boolean, unit: dev.southstar21.volum.m
     return when {
         timed && set.weight > 0 -> "$w ${unit.label} × ${formatSeconds(set.seconds ?: 0)}"
         timed -> formatSeconds(set.seconds ?: 0)
+        set.weight == 0.0 -> plural(set.reps, "rep")
         else -> "$w ${unit.label} × ${set.reps}"
     }
 }

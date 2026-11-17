@@ -209,7 +209,7 @@ fun PartnerSessionScreen(workoutId: String) {
                         center = {
                             Pill {
                                 Box(Modifier.size(8.dp).accentGel(CircleShape))
-                                ElapsedTxt(w.startedAt, size = T.Label, weight = Bold, prefix = "Live · ")
+                                ElapsedTxt(w.startedAt, size = T.Label, weight = Bold, prefix = "Live, ")
                             }
                         },
                     )
@@ -218,8 +218,8 @@ fun PartnerSessionScreen(workoutId: String) {
                     Row(Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Avatar(partnerName, size = 52.dp, warm = true)
                         Column {
-                            Txt("$partnerName · ${w.routineName}", size = T.Headline, weight = ExtraBold, tracking = T.TitleTracking, maxLines = 2)
-                            Mute("$done of $total sets · ${w.entries.count { it.isComplete() }} of ${plural(w.entries.size, "exercise")}", size = T.Label)
+                            Txt("$partnerName, ${w.routineName}", size = T.Headline, weight = ExtraBold, tracking = T.TitleTracking, maxLines = 2)
+                            Mute("$done of $total sets, ${w.entries.count { it.isComplete() }} of ${plural(w.entries.size, "exercise")}", size = T.Label)
                         }
                     }
                     error?.let { ErrorText(it, Modifier.padding(start = 20.dp, top = 8.dp)) }

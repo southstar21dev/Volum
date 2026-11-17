@@ -31,12 +31,19 @@ import kotlinx.datetime.minus
 
 const val MAX_COMPARE_REPS = 12
 
-data class BestSet(val weight: Double, val unit: WeightUnit, val weightKg: Double, val reps: Int, val time: Long)
+data class BestSet(val weight: Double, val unit: WeightUnit, val weightKg: Double, val reps: Int, val time: Long) {
+    /** Done at bodyweight (no load logged): it ranks and compares on reps alone. */
+    val isBodyweight: Boolean get() = weightKg <= 0.0
+}
 
 fun workoutTime(w: Workout): Long = parseTime(w.finishedAt ?: w.startedAt)
 
+/**
+ * The done, non-warm-up sets with reps. A set at no weight counts too (a bodyweight pull-up): it adds
+ * nothing to volume, and ranks below any loaded set, then by reps.
+ */
 fun workingSets(entry: WorkoutEntry): List<SetEntry> =
-    if (entry.isSkipped) emptyList() else entry.sets.filter { it.done && it.tag != SetTag.Warmup && it.reps >= 1 && it.weight > 0 }
+    if (entry.isSkipped) emptyList() else entry.sets.filter { it.done && it.tag != SetTag.Warmup && it.reps >= 1 && it.weight >= 0 }
 
 fun epley(weightKg: Double, reps: Int): Double = weightKg * (1 + reps / 30.0)
 
@@ -47,7 +54,9 @@ fun bestSetIn(workouts: List<Workout>, exerciseId: String, maxReps: Int = MAX_CO
         for (entry in w.entries) {
             if (entry.exerciseId != exerciseId) continue
             for (set in workingSets(entry)) {
-                if (set.reps > maxReps) continue
+                // The rep cap keeps high-rep sets out of load comparisons; a bodyweight set has no load,
+                // so its reps are the whole measure and always count.
+                if (set.reps > maxReps && set.weight > 0) continue
                 val kg = toKg(set.weight, set.unit)
                 val b = best
                 if (b == null || kg > b.weightKg || (kg == b.weightKg && set.reps > b.reps)) best = BestSet(set.weight, set.unit, kg, set.reps, time)
@@ -60,6 +69,8 @@ fun bestSetIn(workouts: List<Workout>, exerciseId: String, maxReps: Int = MAX_CO
 sealed interface Comparison {
     data class Weight(val amount: String, val gain: Double) : Comparison
     data class Reps(val amount: String, val at: String, val gain: Double) : Comparison
+    /** More reps at bodyweight, where there is no load to compare: "3 reps". */
+    data class BodyweightReps(val amount: String, val gain: Double) : Comparison
     data object Equal : Comparison
     data object Worse : Comparison
 }
@@ -77,6 +88,14 @@ fun formatLoad(value: Double, unit: WeightUnit, exact: Boolean): String {
 }
 
 fun compareBest(now: BestSet, then: BestSet, unit: WeightUnit): Comparison {
+    if (now.isBodyweight && then.isBodyweight) {
+        val d = now.reps - then.reps
+        return when {
+            d > 0 -> Comparison.BodyweightReps("$d ${if (d == 1) "rep" else "reps"}", now.reps.toDouble() / then.reps - 1)
+            d == 0 -> Comparison.Equal
+            else -> Comparison.Worse
+        }
+    }
     val nowE = epley(now.weightKg, now.reps)
     val thenE = epley(then.weightKg, then.reps)
     if (nowE < thenE - 1e-9) return Comparison.Worse
@@ -98,7 +117,7 @@ fun compareBest(now: BestSet, then: BestSet, unit: WeightUnit): Comparison {
 
 fun compareBestIn(now: BestSet, then: BestSet, thenWorkouts: List<Workout>, exerciseId: String, unit: WeightUnit): Comparison {
     val cmp = compareBest(now, then, unit)
-    if (cmp !is Comparison.Weight && cmp !is Comparison.Reps) return cmp
+    if (cmp !is Comparison.Weight && cmp !is Comparison.Reps && cmp !is Comparison.BodyweightReps) return cmp
     var dominated = false
     for (w in thenWorkouts) for (entry in w.entries) {
         if (entry.exerciseId != exerciseId) continue
@@ -249,7 +268,10 @@ private fun workoutsSinceBreak(own: List<Timed>, now: Long): Int? {
     return null
 }
 
-/** Lifts this week heavier than every earlier working set of that lift. */
+/**
+ * Lifts this week heavier than every earlier working set of that lift; for a lift only ever done at
+ * bodyweight, more reps than every earlier set.
+ */
 fun countPrsThisWeek(workouts: List<Workout>, userId: String, now: Long): Int {
     val own = workouts.filter { it.owner == userId && it.status == WorkoutStatus.Completed && !it.deleted }
         .map { Timed(it, it, minOf(workoutTime(it), now)) }.sortedBy { it.time }
@@ -265,11 +287,14 @@ private fun countPrs(own: List<Timed>, now: Long): Int {
         for (eid in exerciseIds(listOf(t))) {
             val best = bestSetIn(listOf(t.workout), eid, Int.MAX_VALUE)
             val prior = bestSetIn(earlier, eid, Int.MAX_VALUE)
-            if (best != null && prior != null && best.weightKg > prior.weightKg + 0.01) prs++
+            if (best != null && prior != null && isRecord(best, prior)) prs++
         }
     }
     return prs
 }
+
+private fun isRecord(best: BestSet, prior: BestSet): Boolean =
+    if (best.isBodyweight && prior.isBodyweight) best.reps > prior.reps else best.weightKg > prior.weightKg + 0.01
 
 private fun weeklyVolume(own: List<Timed>, now: Long): List<WeekVolume> {
     val current = startOfWeek(localDateOf(now))
@@ -291,6 +316,7 @@ fun volumeKg(workout: Workout): Double = workout.entries.sumOf { e -> workingSet
 private fun toSlide(id: String, fullName: String, cmp: Comparison, lead: String, value: String): Ranked? = when (cmp) {
     is Comparison.Weight -> Ranked(Slide(id, displayName(fullName), fullName, cmp.amount, lead, value), cmp.gain)
     is Comparison.Reps -> Ranked(Slide(id, displayName(fullName), fullName, cmp.amount, "at", "${cmp.at}."), cmp.gain)
+    is Comparison.BodyweightReps -> Ranked(Slide(id, displayName(fullName), fullName, cmp.amount, lead, value), cmp.gain)
     else -> null
 }
 
