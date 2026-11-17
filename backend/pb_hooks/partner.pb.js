@@ -112,7 +112,7 @@ routerAdd(
 
     const theirsToMe = incoming.find((row) => row.getString("requester") === target.id);
     if (theirsToMe) {
-      throw new BadRequestError("They already sent you a request — accept it in Settings");
+      throw new BadRequestError("They already sent you a request. Accept theirs instead");
     }
 
     const collection = e.app.findCollectionByNameOrId("pair_requests");

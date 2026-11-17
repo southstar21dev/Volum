@@ -278,7 +278,7 @@ class UiLogicTest {
         assertEquals("${formatWeight(best.weight, best.unit)} × ${best.reps}", lastTopSetLabel(sets, timed = false), "last label")
         for (unit in WeightUnit.entries) {
             val shown = "top ${formatWeightValue(convert(best.weight, best.unit, unit))} ${unit.label} × ${best.reps}"
-            assertEquals(shown, summaryOf(entry, unit).substringAfter(" · "), "summary in ${unit.label}")
+            assertEquals(shown, summaryOf(entry, unit).substringAfter(", "), "summary in ${unit.label}")
         }
         return sets.first { it.weight == best.weight && it.unit == best.unit && it.reps == best.reps && it.done && it.tag != SetTag.Warmup }
     }
@@ -295,8 +295,8 @@ class UiLogicTest {
         val top = assertOneTopSet(sets)
         assertEquals(62.5, top.weight)
         assertEquals(4, top.reps)
-        assertEquals("4 sets · top 62.5 kg × 4", summaryOf(bench(sets = sets), WeightUnit.Kg))
-        assertEquals("4 sets · top 137.8 lb × 4", summaryOf(bench(sets = sets), WeightUnit.Lb))
+        assertEquals("4 sets, top 62.5 kg × 4", summaryOf(bench(sets = sets), WeightUnit.Kg))
+        assertEquals("4 sets, top 137.8 lb × 4", summaryOf(bench(sets = sets), WeightUnit.Lb))
     }
 
     @Test fun topSetCountsDropSetsAndBreaksAWeightTieOnReps() {
@@ -323,7 +323,7 @@ class UiLogicTest {
     @Test fun timedTopSetIsTheLongestHoldInEveryView() {
         val sets = listOf(hold(30, weight = 10.0), hold(90), hold(120, tag = SetTag.Warmup), hold(200, done = false))
         val entry = bench(sets = sets, timed = true)
-        assertEquals("2 sets · 1:30 best", summaryOf(entry, WeightUnit.Kg))
+        assertEquals("2 sets, 1:30 best", summaryOf(entry, WeightUnit.Kg))
         val point = topSetSeries(listOf(workout("w1", at, entry)), "me").getValue("bench").single()
         assertTrue(point.timed)
         assertEquals(90.0, point.value)
@@ -333,7 +333,24 @@ class UiLogicTest {
     @Test fun timedTopSetShowsTheWeightOfAWeightedLongestHold() {
         val sets = listOf(hold(90, weight = 10.0), hold(60))
         assertEquals("10 kg × 1:30", lastTopSetLabel(sets, timed = true))
-        assertEquals("2 sets · 1:30 best", summaryOf(bench(sets = sets, timed = true), WeightUnit.Kg))
+        assertEquals("2 sets, 1:30 best", summaryOf(bench(sets = sets, timed = true), WeightUnit.Kg))
+    }
+
+    @Test fun aBodyweightTopSetReadsAsReps() {
+        val sets = listOf(s(0.0, 8), s(0.0, 12), s(0.0, 20, tag = SetTag.Warmup), s(0.0, 15, done = false))
+        assertEquals("12 reps", lastTopSetLabel(sets, timed = false))
+        assertEquals("1 rep", lastTopSetLabel(listOf(s(0.0, 1)), timed = false))
+        for (unit in WeightUnit.entries) assertEquals("2 sets, top 12 reps", summaryOf(bench(sets = sets), unit))
+        val best = assertNotNull(bestSetIn(listOf(workout("w1", at, bench(sets = sets))), "bench", Int.MAX_VALUE))
+        val point = topSetSeries(listOf(workout("w1", at, bench(sets = sets))), "me").getValue("bench").single()
+        assertEquals(best.weightKg to best.reps, point.value to point.reps, "chart and best agree")
+        assertEquals(0.0 to 12, point.value to point.reps)
+    }
+
+    @Test fun aLoadedSetStillLeadsOverBodyweightSetsInEveryLabel() {
+        val sets = listOf(s(0.0, 15), s(10.0, 5))
+        assertEquals("10 kg × 5", lastTopSetLabel(sets, timed = false))
+        assertEquals("2 sets, top 10 kg × 5", summaryOf(bench(sets = sets), WeightUnit.Kg))
     }
 
     // ---- Chart series -------------------------------------------------------------------------

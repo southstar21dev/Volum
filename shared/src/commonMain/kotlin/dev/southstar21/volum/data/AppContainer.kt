@@ -676,7 +676,7 @@ class PartnerRepository(
 private val CLEARABLE_SET_FIELDS = listOf("tag", "note", "seconds")
 
 fun partnerErrorMessage(e: PbException): String = when {
-    e.status == 401 -> "Session expired — sign in again"
+    e.status == 401 -> "Session expired. Sign in again"
     e.status == 404 -> "Session ended"
     (e.status == 400 || e.status == 403) && e.message.isNotBlank() -> e.message
     e.status == 0 -> "You're offline"

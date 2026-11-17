@@ -149,9 +149,15 @@ fun initials(name: String): String {
     }
 }
 
-/** Volume as "6.4 t" from 1000 kg up, else "640 kg". */
-fun formatVolume(kg: Double): String =
-    if (kg >= 1000) "${formatWeightValue(kg / 1000)} t" else "${kg.roundToInt()} kg"
+/**
+ * Volume ([kg] lifted) in [unit]: "6.4 t" from 1000 kg up, else "640 kg"; in pounds "14.1k lb" from
+ * 1000 lb up, else "640 lb". The number and the unit are always split by the last space.
+ */
+fun formatVolume(kg: Double, unit: WeightUnit): String {
+    if (unit == WeightUnit.Kg) return if (kg >= 1000) "${formatWeightValue(kg / 1000)} t" else "${kg.roundToInt()} kg"
+    val lb = kgToLb(kg)
+    return if (lb >= 1000) "${formatWeightValue(lb / 1000)}k lb" else "${lb.roundToInt()} lb"
+}
 
 fun formatThousands(n: Int): String {
     val s = abs(n).toString()

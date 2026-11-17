@@ -16,6 +16,7 @@ import dev.southstar21.volum.util.formatSeconds
 import dev.southstar21.volum.util.formatWeight
 import dev.southstar21.volum.util.newId
 import dev.southstar21.volum.util.nowIso
+import dev.southstar21.volum.util.plural
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.serialization.KSerializer
@@ -373,14 +374,14 @@ fun topSetOrder(timed: Boolean): Comparator<SetEntry> =
     if (timed) compareBy<SetEntry> { it.seconds ?: 0 }.thenBy { dev.southstar21.volum.util.toKg(it.weight, it.unit) }
     else compareBy<SetEntry> { dev.southstar21.volum.util.toKg(it.weight, it.unit) }.thenBy { it.reps }
 
-/** "62.5 kg × 8" for the top working set of last time, or a hold length for timed lifts. */
+/** "62.5 kg × 8" for the top working set of last time, "12 reps" at bodyweight, or a hold length for timed lifts. */
 fun lastTopSetLabel(sets: List<SetEntry>, timed: Boolean): String? {
     val qualifying = sets.filter { it.done && it.tag != SetTag.Warmup }
     if (qualifying.isEmpty()) return null
     val top = qualifying.maxWith(topSetOrder(timed))
-    return if (timed) {
-        if (top.weight > 0) "${formatWeight(top.weight, top.unit)} × ${formatSeconds(top.seconds ?: 0)}" else formatSeconds(top.seconds ?: 0)
-    } else {
-        "${formatWeight(top.weight, top.unit)} × ${top.reps}"
+    return when {
+        timed -> if (top.weight > 0) "${formatWeight(top.weight, top.unit)} × ${formatSeconds(top.seconds ?: 0)}" else formatSeconds(top.seconds ?: 0)
+        top.weight == 0.0 -> plural(top.reps, "rep")
+        else -> "${formatWeight(top.weight, top.unit)} × ${top.reps}"
     }
 }

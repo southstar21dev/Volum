@@ -434,7 +434,7 @@ fun SessionScreen(workoutId: String) {
             heading = {
                 Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp).tappable(highlight = false, onClickLabel = "Rename workout") { renameWorkout = true }) {
                     ScreenTitle(workout.routineName)
-                    Mute("$doneSets of $totalSets sets · $doneEntries of ${plural(workout.entries.size, "exercise")}", size = T.Body)
+                    Mute("$doneSets of $totalSets sets, $doneEntries of ${plural(workout.entries.size, "exercise")}", size = T.Body)
                 }
                 if (partner != null) {
                     // Your partner's edits reach you with the 10 s poll: two missed in a row is slow.
@@ -456,7 +456,7 @@ fun SessionScreen(workoutId: String) {
                         Mute("Ready to finish? Tap below to record your workout.", Modifier.padding(top = 4.dp), size = T.Label, align = TextAlign.Center)
                         Spacer(Modifier.height(16.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AnimatedNumber(volumeKg(workout)) { Stat(formatVolume(it), "volume", Modifier.weight(1f)) }
+                            AnimatedNumber(volumeKg(workout)) { Stat(formatVolume(it, prefs.unit), "volume", Modifier.weight(1f)) }
                             AnimatedNumber(doneSets.toDouble()) { Stat("${it.roundToInt()}", "sets", Modifier.weight(1f)) }
                             ElapsedMinutesStat(workout.startedAt, Modifier.weight(1f))
                         }
@@ -501,7 +501,7 @@ fun SessionScreen(workoutId: String) {
     ActionSheet(
         open = menuEntry != null,
         title = m?.name,
-        subtitle = m?.let { e -> "${e.sets.count { it.done }} of ${e.sets.size} sets done" + (lastLabels[e.exerciseId]?.let { " · last $it" } ?: "") },
+        subtitle = m?.let { e -> "${e.sets.count { it.done }} of ${e.sets.size} sets done" + (lastLabels[e.exerciseId]?.let { ", last $it" } ?: "") },
         actions = if (m == null) emptyList() else listOf(
             SheetAction("Rename", Icons.Pencil, subtitle = "Or swap for another exercise") { renameEntry = m },
             SheetAction(if (m.isSkipped) "Unskip" else "Skip for today", Icons.Skip, subtitle = if (m.isSkipped) null else "Stays in the routine") {

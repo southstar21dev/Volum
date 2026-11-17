@@ -220,7 +220,7 @@ fun TodayScreen() {
         ownActive?.let { w ->
             LiveRow(
                 title = "You're training",
-                subtitle = "${w.routineName} · ${elapsedLabel(parseTime(w.startedAt), now)}" + if (actives.size > 1) " (+${actives.size - 1} more)" else "",
+                subtitle = "${w.routineName}, ${elapsedLabel(parseTime(w.startedAt), now)}" + if (actives.size > 1) " (+${actives.size - 1} more)" else "",
                 avatar = { Box(Modifier.size(38.dp).accentGel(CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Play, c.onAccent, size = 14.dp) } },
                 onClick = { nav.push(Route.Session(w.id)) },
                 onMenu = { activeMenu = true },
@@ -231,7 +231,7 @@ fun TodayScreen() {
         if (partnerUser != null && partnerWorkout != null) {
             LiveRow(
                 title = "${partnerUser.displayName} is training",
-                subtitle = "${partnerWorkout.routineName} · live now",
+                subtitle = "${partnerWorkout.routineName}, live now",
                 avatar = { Avatar(partnerUser.displayName, size = 38.dp, warm = true) },
                 onClick = { nav.push(Route.PartnerSession(partnerWorkout.id)) },
             )
@@ -243,7 +243,7 @@ fun TodayScreen() {
             val prs = rememberTicking(workouts, tick = now) { at -> countPrsThisWeek(workouts.values.toList(), user.id, at) }
             val today = localDateOf(now)
             val month = remember(ownWorkouts, today) { ownWorkouts.count { it.finishedAt != null && localDateOf(parseTime(it.finishedAt)).let { d -> d.year == today.year && d.month == today.month } } }
-            VolumeCard(weeks.map { it.start to it.volumeKg }, prs, month)
+            VolumeCard(weeks.map { it.start to it.volumeKg }, prs, month, prefs.unit)
         }
 
         if (mine.isEmpty()) {
@@ -256,7 +256,7 @@ fun TodayScreen() {
                         pair.forEachIndexed { i, routine ->
                             RoutineCard(
                                 routine = routine,
-                                subtitle = "${plural(routine.items.size, "exercise")} · ${lastDoneLabel(last[routine.id], now)}",
+                                subtitle = "${plural(routine.items.size, "exercise")}, ${lastDoneLabel(last[routine.id], now)}",
                                 highlight = row == 0 && i == 0,
                                 active = ownActive?.routineId == routine.id,
                                 modifier = Modifier.weight(1f),
@@ -474,17 +474,17 @@ private fun WeekStrip(workouts: List<Workout>, now: Long) {
 }
 
 @Composable
-private fun VolumeCard(weeks: List<Pair<kotlinx.datetime.LocalDate, Double>>, prs: Int, monthWorkouts: Int) {
+private fun VolumeCard(weeks: List<Pair<kotlinx.datetime.LocalDate, Double>>, prs: Int, monthWorkouts: Int, unit: dev.southstar21.volum.model.WeightUnit) {
     val c = Volum.colors
     val max = weeks.maxOf { it.second }.coerceAtLeast(1.0)
     GlassCard(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp).fillMaxWidth()) {
         Row(verticalAlignment = Alignment.Bottom) {
             Column(Modifier.weight(1f)) {
                 Txt("Weekly volume", size = T.BodyLarge, weight = Bold)
-                Mute(listOfNotNull(if (prs > 0) "${plural(prs, "PR")} this week" else null, "${plural(monthWorkouts, "workout")} this month").joinToString(" · "), size = T.Caption)
+                Mute(listOfNotNull(if (prs > 0) "${plural(prs, "PR")} this week" else null, "${plural(monthWorkouts, "workout")} this month").joinToString(", "), size = T.Caption)
             }
             AnimatedNumber(weeks.sumOf { it.second }) { v ->
-                val text = formatVolume(v)
+                val text = formatVolume(v, unit)
                 Row(verticalAlignment = Alignment.Bottom) {
                     Txt(text.substringBeforeLast(' '), size = T.Heading, weight = ExtraBold, tabular = true)
                     Txt(" " + text.substringAfterLast(' '), Modifier.padding(bottom = 2.dp), size = T.Caption, color = c.mute, weight = Semibold)
@@ -507,7 +507,7 @@ private fun VolumeCard(weeks: List<Pair<kotlinx.datetime.LocalDate, Double>>, pr
                     if (current) {
                         // Unbounded both ways: a short bar mustn't squash the chip to its own height.
                         Box(Modifier.offset(y = (-30).dp).wrapContentSize(Alignment.TopCenter, unbounded = true).popIn(520L + i * 55L).liquidGlass(RoundedCornerShape(11.dp)).padding(horizontal = 8.dp, vertical = 3.dp)) {
-                            Txt(formatVolume(vol), size = T.Micro, weight = ExtraBold, tabular = true, maxLines = 1)
+                            Txt(formatVolume(vol, unit), size = T.Micro, weight = ExtraBold, tabular = true, maxLines = 1)
                         }
                     }
                 }

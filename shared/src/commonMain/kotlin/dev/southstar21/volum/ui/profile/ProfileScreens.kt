@@ -140,7 +140,7 @@ fun ProfileScreen() {
                 Avatar(partner.displayName, size = 44.dp, warm = true)
                 Column(Modifier.weight(1f)) {
                     Txt(partner.displayName, size = T.Body, weight = Bold, maxLines = 1)
-                    Mute("${partner.email} · sharing routines and lifts", size = T.Caption, maxLines = 2)
+                    Mute("${partner.email}, sharing routines and lifts", size = T.Caption, maxLines = 2)
                 }
                 TextButton("Unpair", color = c.danger, size = T.Small) { if (!unpairing) unpair = true }
             }
@@ -249,7 +249,7 @@ private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 /** The sync error line, from the kind of failure rather than the raw exception or server message. */
 private fun syncErrorDetail(problem: SyncProblem?): String = when (problem) {
     null -> "Tap to retry"
-    SyncProblem.SessionExpired -> "Session expired — sign in again"
+    SyncProblem.SessionExpired -> "Session expired. Sign in again."
     SyncProblem.Rejected -> "Some changes couldn't be saved to your account. Tap to retry."
     SyncProblem.Failed -> "Couldn't sync with your account. Tap to retry."
 }

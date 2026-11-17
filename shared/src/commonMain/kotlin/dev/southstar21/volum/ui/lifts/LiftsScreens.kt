@@ -220,7 +220,7 @@ fun LiftsScreen() {
                 }
             }
             item(key = "list-label", contentType = "label") {
-                ListLabel(if (sort == LiftSort.Alphabetical) "ALL · A–Z" else "RECENTLY DONE", Modifier.padding(top = if (showRail) 4.dp else 20.dp))
+                ListLabel(if (sort == LiftSort.Alphabetical) "ALL, A–Z" else "RECENTLY DONE", Modifier.padding(top = if (showRail) 4.dp else 20.dp))
             }
             if (visible.isEmpty()) {
                 item(key = "empty", contentType = "empty") {
@@ -252,7 +252,7 @@ fun LiftsScreen() {
                                     ) {
                                         Column(Modifier.weight(1f)) {
                                             Txt(ex.name, size = T.Body, weight = Bold, maxLines = 1)
-                                            Mute(label ?: if (ex.isTimed) "Timed · not done yet" else "Not done yet", size = T.Caption, maxLines = 1)
+                                            Mute(label ?: if (ex.isTimed) "Timed, not done yet" else "Not done yet", size = T.Caption, maxLines = 1)
                                         }
                                         if (points.size > 1) Sparkline(points.takeLast(6))
                                     }
@@ -387,6 +387,8 @@ fun ExerciseDetailScreen(exerciseId: String) {
         topSetSeries(own, session.user.id)[exerciseId].orEmpty().filter { it.timed == timed }
     }
     var range by remember { mutableStateOf(ChartRange.M3) }
+    // Never loaded: the top sets are reps at bodyweight, so the cards and chart count reps, not 0 kg.
+    val bodyweight = !timed && series.isNotEmpty() && series.all { it.value == 0.0 }
     val shown = filterRange(series, range, now).ifEmpty { if (range == ChartRange.All) emptyList() else series.takeLast(1) }
     var menu by remember { mutableStateOf(false) }
     var renaming by rememberSaveable { mutableStateOf(false) }
@@ -402,25 +404,25 @@ fun ExerciseDetailScreen(exerciseId: String) {
             trailing = { if (exercise != null && exercise.owner == session.user.id) CircleButton(Icons.More, "More options for $name") { menu = true } },
         )
         ScreenTitle(name, Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp))
-        val pr = series.maxByOrNull { it.value }
+        val pr = if (bodyweight) series.maxByOrNull { it.reps } else series.maxByOrNull { it.value }
         val latest = series.lastOrNull()
         val previous = series.dropLast(1).lastOrNull()
         Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp).height(androidx.compose.foundation.layout.IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             StatCard(
                 if (timed) "Longest hold" else "Personal record",
-                pr?.let { if (timed) formatSeconds(it.value.toInt()) else formatWeightValue(display(it.value)) } ?: "—",
-                if (timed) "" else unit.label,
-                pr?.let { if (timed) shortDate(it.time) else "${it.reps} reps · ${shortDate(it.time)}" },
+                pr?.let { if (timed) formatSeconds(it.value.toInt()) else if (bodyweight) "${it.reps}" else formatWeightValue(display(it.value)) } ?: "-",
+                if (timed) "" else if (bodyweight) "reps" else unit.label,
+                pr?.let { if (timed || bodyweight) shortDate(it.time) else "${it.reps} reps, ${shortDate(it.time)}" },
                 null,
                 Modifier.weight(1f).fillMaxHeight(),
             )
-            val delta = if (latest != null && previous != null) latest.value - previous.value else null
+            val delta = if (latest != null && previous != null) { if (bodyweight) (latest.reps - previous.reps).toDouble() else latest.value - previous.value } else null
             StatCard(
                 if (timed) "Latest hold" else "Latest top set",
-                latest?.let { if (timed) formatSeconds(it.value.toInt()) else formatWeightValue(display(it.value)) } ?: "—",
-                if (timed) "" else unit.label,
+                latest?.let { if (timed) formatSeconds(it.value.toInt()) else if (bodyweight) "${it.reps}" else formatWeightValue(display(it.value)) } ?: "-",
+                if (timed) "" else if (bodyweight) "reps" else unit.label,
                 null,
-                delta?.takeIf { abs(it) > 0.01 }?.let { d -> (if (d > 0) "+" else "−") + if (timed) "${abs(d).toInt()} s" else "${formatWeightValue(abs(display(d)))} ${unit.label}" },
+                delta?.takeIf { abs(it) > 0.01 }?.let { d -> (if (d > 0) "+" else "−") + if (timed) "${abs(d).toInt()} s" else if (bodyweight) plural(abs(d).toInt(), "rep") else "${formatWeightValue(abs(display(d)))} ${unit.label}" },
                 Modifier.weight(1f).fillMaxHeight(),
             )
         }
@@ -430,9 +432,9 @@ fun ExerciseDetailScreen(exerciseId: String) {
             if (shown.isEmpty()) {
                 Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) { Mute("Log a session to see your trend.") }
             } else {
-                ProgressChart(shown, timed, unit)
+                ProgressChart(shown, timed, bodyweight, unit)
             }
-            Mute(if (timed) "Longest hold per session." else "Capsules show reps on the top set.", Modifier.padding(start = 4.dp, top = 6.dp), size = T.Caption)
+            Mute(if (timed) "Longest hold per session." else if (bodyweight) "Most reps per session." else "Capsules show reps on the top set.", Modifier.padding(start = 4.dp, top = 6.dp), size = T.Caption)
         }
         val sessions = remember(own) { own.filter { it.finishedAt != null && !it.deleted && it.entries.any { e -> e.exerciseId == exerciseId && !e.isSkipped } }.sortedByDescending { workoutTime(it) } }
         Row(Modifier.padding(start = 22.dp, end = 22.dp, top = 18.dp, bottom = 10.dp), verticalAlignment = Alignment.Bottom) {
@@ -446,7 +448,7 @@ fun ExerciseDetailScreen(exerciseId: String) {
                 val entryTimed = entry.isTimed
                 GlassCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), padding = androidx.compose.foundation.layout.PaddingValues(horizontal = 18.dp, vertical = 12.dp), onClick = { nav.push(Route.WorkoutDetail(w.id)) }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Txt("${shortDate(workoutTime(w))} · ${w.routineName}", Modifier.weight(1f), size = T.Body, weight = Bold, maxLines = 1)
+                        Txt("${shortDate(workoutTime(w))}, ${w.routineName}", Modifier.weight(1f), size = T.Body, weight = Bold, maxLines = 1)
                         Icon(Icons.ChevronRight, c.mute, size = 18.dp)
                     }
                     Spacer(Modifier.height(2.dp))
@@ -460,7 +462,7 @@ fun ExerciseDetailScreen(exerciseId: String) {
                     }
                     done.forEachIndexed { i, s ->
                         val v = convert(s.weight, s.unit, unit)
-                        SetLine("${i + 1}", if (entryTimed) formatSeconds(s.seconds ?: 0) else "${formatWeightValue(v)} ${unit.label} × ${s.reps}", strong = s.id == topId)
+                        SetLine("${i + 1}", if (entryTimed) formatSeconds(s.seconds ?: 0) else if (s.weight == 0.0) plural(s.reps, "rep") else "${formatWeightValue(v)} ${unit.label} × ${s.reps}", strong = s.id == topId)
                     }
                 }
             }
@@ -539,12 +541,12 @@ private fun StatCard(label: String, value: String, unit: String, sub: String?, c
 
 /** Top set per session: a forest line over milky rep capsules, tap a point for its numbers. */
 @Composable
-private fun ProgressChart(points: List<ChartPoint>, timed: Boolean, unit: WeightUnit) {
+private fun ProgressChart(points: List<ChartPoint>, timed: Boolean, bodyweight: Boolean, unit: WeightUnit) {
     val c = Volum.colors
     val measurer = rememberTextMeasurer()
     val labelStyle = textStyle(T.Micro, Semibold, c.mute)
     var selected by remember(points) { mutableStateOf(points.lastIndex) }
-    val values = points.map { if (timed) it.value else convert(it.value, WeightUnit.Kg, unit) }
+    val values = points.map { if (timed) it.value else if (bodyweight) it.reps.toDouble() else convert(it.value, WeightUnit.Kg, unit) }
     val maxV = values.max()
     val minV = values.min()
     val pad = ((maxV - minV) * 0.15).coerceAtLeast(if (timed) 5.0 else 2.5)
@@ -552,7 +554,9 @@ private fun ProgressChart(points: List<ChartPoint>, timed: Boolean, unit: Weight
     val bottom = (minV - pad).coerceAtLeast(0.0)
     fun spoken(i: Int): String {
         val p = points[i]
-        return if (timed) "${formatSeconds(p.value.toInt())} on ${shortDate(p.time)}" else "${formatWeightValue(values[i])} ${unit.label} for ${p.reps} reps on ${shortDate(p.time)}"
+        return if (timed) "${formatSeconds(p.value.toInt())} on ${shortDate(p.time)}"
+        else if (bodyweight) "${plural(p.reps, "rep")} on ${shortDate(p.time)}"
+        else "${formatWeightValue(values[i])} ${unit.label} for ${p.reps} reps on ${shortDate(p.time)}"
     }
     val trend = "Top set per session, ${plural(points.size, "session")}: from ${spoken(0)} to ${spoken(points.lastIndex)}."
     Box(Modifier.fillMaxWidth().height(200.dp)) {
@@ -585,7 +589,7 @@ private fun ProgressChart(points: List<ChartPoint>, timed: Boolean, unit: Weight
                 val v = bottom + (top - bottom) * k / 2
                 val gy = y(v)
                 drawLine(c.line, Offset(left, gy), Offset(right, gy), 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 4.dp.toPx())))
-                val text = if (timed) "${v.roundToInt()}" else formatWeightValue(v)
+                val text = if (timed || bodyweight) "${v.roundToInt()}" else formatWeightValue(v)
                 drawText(measurer, text, Offset(0f, gy - 7.dp.toPx()), labelStyle)
             }
             // Rep capsules
@@ -619,7 +623,9 @@ private fun ProgressChart(points: List<ChartPoint>, timed: Boolean, unit: Weight
         }
         val p = points.getOrNull(selected)
         if (p != null) {
-            val label = if (timed) "${formatSeconds(p.value.toInt())} · ${shortDate(p.time)}" else "${formatWeightValue(values[selected])} ${unit.label} × ${p.reps} · ${monthShort(localDateOf(p.time))} ${localDateOf(p.time).day}"
+            val label = if (timed) "${formatSeconds(p.value.toInt())}, ${shortDate(p.time)}"
+            else if (bodyweight) "${plural(p.reps, "rep")}, ${monthShort(localDateOf(p.time))} ${localDateOf(p.time).day}"
+            else "${formatWeightValue(values[selected])} ${unit.label} × ${p.reps}, ${monthShort(localDateOf(p.time))} ${localDateOf(p.time).day}"
             Box(
                 Modifier.align(Alignment.TopCenter).liquidGlass(RoundedCornerShape(14.dp))
                     .clearAndSetSemantics { contentDescription = spoken(selected); liveRegion = LiveRegionMode.Polite }
