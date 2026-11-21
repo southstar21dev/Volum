@@ -23,7 +23,7 @@ import androidx.compose.ui.zIndex
 import dev.southstar21.volum.ui.components.Reorder
 import dev.southstar21.volum.data.SyncState
 import dev.southstar21.volum.ui.components.ReorderAutoScroll
-import dev.southstar21.volum.ui.components.reorderGrip
+import dev.southstar21.volum.ui.components.reorderRow
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
@@ -236,6 +236,8 @@ fun SessionBody(
                 val dragging = reorder.draggingId == e.id
                 val lift by animateFloatAsState(if (dragging) 1f else 0f, Springs.settle(), label = "lift")
                 val index = activeIds.indexOf(e.id)
+                // The gesture outlives recompositions, so its tap reads the card and actions as they are now.
+                val tapCard by rememberUpdatedState({ actions.onExpand(e) })
                 Box(
                     Modifier
                         .then(if (onMove == null) Modifier else Modifier.semantics {
@@ -255,20 +257,17 @@ fun SessionBody(
                 ) {
                     ActiveEntryCard(
                         e, expanded = e.id == shown, lastLabel = lastLabels[e.exerciseId], preferred = preferred, actions = actions,
-                        grip = if (onMove == null) null else ({
-                            Box(
-                                Modifier.size(40.dp).reorderGrip(
-                                    reorder, e.id,
-                                    onStart = { if (draft.isEmpty()) draft.addAll(latestIds) },
-                                    onDrag = { dy -> reorder.dragBy(dy, draft) { it } },
-                                    onDrop = {
-                                        val ids = draft.toList()
-                                        if (ids == latestStoredIds()) draft.clear() else latestMove?.invoke(ids)
-                                    },
-                                ),
-                                contentAlignment = Alignment.Center,
-                            ) { Icon(Icons.Grip, if (dragging) c.accent else c.mute, size = 18.dp, contentDescription = "Reorder ${e.name}") }
-                        }),
+                        holdToReorder = if (onMove == null) null else Modifier.reorderRow(
+                            reorder, e.id,
+                            onTap = { tapCard() },
+                            onStart = { if (draft.isEmpty()) draft.addAll(latestIds) },
+                            onDrag = { dy -> reorder.dragBy(dy, draft) { it } },
+                            onDrop = {
+                                val ids = draft.toList()
+                                if (ids == latestStoredIds()) draft.clear() else latestMove?.invoke(ids)
+                            },
+                            tapLabel = "Expand ${e.name}",
+                        ),
                     )
                 }
             }

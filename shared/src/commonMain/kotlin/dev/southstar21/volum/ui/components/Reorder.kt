@@ -2,7 +2,9 @@ package dev.southstar21.volum.ui.components
 
 import androidx.compose.animation.core.animate
 import androidx.compose.foundation.ScrollState
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -15,7 +17,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -43,7 +51,7 @@ class Reorder(private val scope: CoroutineScope) {
     private val settling = mutableStateMapOf<String, Float>()
     private val jobs = mutableMapOf<String, Job>()
     val heights = mutableMapOf<String, Int>()
-    /** Each row's grip, to place the finger on screen (it moves with its row). */
+    /** Each row's gesture area, to place the finger on screen (it moves with its row). */
     val grips = mutableMapOf<String, LayoutCoordinates>()
     /** The finger, in root coordinates. */
     private var pointerY = Float.NaN
@@ -134,34 +142,59 @@ class Reorder(private val scope: CoroutineScope) {
 }
 
 /**
- * A row's grip: held, it picks the row up and drags it. [onDrag] gets each step's vertical move and
- * passes it to [Reorder.dragBy] with the caller's list. The callbacks are read when the gesture
- * starts, once per [id]: pass ones that read current state (rememberUpdatedState), not a snapshot.
+ * A whole row as its own grip: a tap runs [onTap], a long press picks the row up and drags it.
+ * One detector does both, so a hold that lifts the row never also counts as a tap. The callbacks are
+ * captured once per [id]: pass ones that read current state (rememberUpdatedState), not a snapshot.
  */
-fun Modifier.reorderGrip(
+fun Modifier.reorderRow(
     reorder: Reorder,
     id: String,
+    onTap: () -> Unit,
     onDrag: (dy: Float) -> Unit,
+    tapLabel: String? = null,
     onStart: () -> Unit = {},
     onDrop: () -> Unit = {},
 ): Modifier =
-    onGloballyPositioned { reorder.grips[id] = it }
+    semantics { role = Role.Button; onClick(tapLabel) { onTap(); true } }
+        .onGloballyPositioned { reorder.grips[id] = it }
         .pointerInput(id) {
-            detectDragGesturesAfterLongPress(
-                onDragStart = { at ->
-                    onStart()
-                    reorder.start(id)
-                    reorder.pointer(id, at)
-                    hapticTick()
-                },
-                onDragEnd = { reorder.drop(); onDrop() },
-                onDragCancel = { reorder.drop(); onDrop() },
-                onDrag = { change, amount ->
-                    change.consume()
-                    reorder.pointer(id, change.position)
-                    onDrag(amount.y)
-                },
-            )
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                var tapped = false
+                var cancelled = false
+                // Held still for the long-press time: picked up. Let go first: a tap. Moved past the
+                // slop first (the page scrolling): neither.
+                withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                    while (true) {
+                        val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: continue
+                        if (change.changedToUpIgnoreConsumed()) { tapped = true; break }
+                        if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) { cancelled = true; break }
+                    }
+                }
+                if (tapped) {
+                    currentEvent.changes.firstOrNull { it.id == down.id }?.consume()
+                    onTap()
+                    return@awaitEachGesture
+                }
+                if (cancelled) return@awaitEachGesture
+                val held = currentEvent.changes.firstOrNull { it.id == down.id }?.takeIf { it.pressed } ?: return@awaitEachGesture
+                onStart()
+                reorder.start(id)
+                reorder.pointer(id, held.position)
+                hapticTick()
+                try {
+                    drag(held.id) { change ->
+                        val dy = change.positionChange().y
+                        change.consume()
+                        reorder.pointer(id, change.position)
+                        onDrag(dy)
+                    }
+                    currentEvent.changes.forEach { if (it.changedToUpIgnoreConsumed()) it.consume() }
+                } finally {
+                    reorder.drop()
+                    onDrop()
+                }
+            }
         }
 
 /** While a row is held near the top or bottom of [viewport], [scroll] moves under it; [onScrolled] gets how far. */

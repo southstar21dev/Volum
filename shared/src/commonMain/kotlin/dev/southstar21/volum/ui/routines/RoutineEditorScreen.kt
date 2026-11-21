@@ -21,7 +21,14 @@ import androidx.compose.ui.unit.DpOffset
 import dev.southstar21.volum.ui.components.outerShadow
 import dev.southstar21.volum.ui.components.Reorder
 import dev.southstar21.volum.ui.components.ReorderAutoScroll
-import dev.southstar21.volum.ui.components.reorderGrip
+import dev.southstar21.volum.ui.components.reorderRow
+import dev.southstar21.volum.data.MAX_EXERCISE_NAME
+import dev.southstar21.volum.model.Exercise
+import dev.southstar21.volum.ui.components.BottomSheet
+import dev.southstar21.volum.ui.components.PrimaryButton
+import dev.southstar21.volum.ui.components.rememberLast
+import dev.southstar21.volum.ui.session.Check
+import dev.southstar21.volum.ui.session.renameLinkTarget
 import dev.southstar21.volum.ui.theme.Durations
 import dev.southstar21.volum.ui.theme.Springs
 import dev.southstar21.volum.ui.theme.riseIn
@@ -118,6 +125,7 @@ fun RoutineEditorScreen(routineId: String?) {
     var addOpen by rememberSaveable { mutableStateOf(false) }
     var deletePrompt by rememberSaveable { mutableStateOf(false) }
     var discardPrompt by rememberSaveable { mutableStateOf(false) }
+    var renaming by rememberSaveable { mutableStateOf<String?>(null) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var leaving by remember { mutableStateOf(false) }
@@ -185,7 +193,7 @@ fun RoutineEditorScreen(routineId: String?) {
         }
         Row(Modifier.padding(start = 22.dp, end = 22.dp, top = 18.dp, bottom = 10.dp).riseIn(), verticalAlignment = Alignment.Bottom) {
             Txt("Exercises", size = T.Subhead, weight = Bold)
-            AnimatedVisibility(items.size > 1, enter = fadeIn(), exit = fadeOut()) { Mute(", hold the grip to reorder", size = T.Label) }
+            AnimatedVisibility(items.size > 1, enter = fadeIn(), exit = fadeOut()) { Mute(", hold one to reorder", size = T.Label) }
         }
         AnimatedVisibility(
             items.isNotEmpty(),
@@ -229,7 +237,7 @@ fun RoutineEditorScreen(routineId: String?) {
                     ) {
                     Column(
                         Modifier
-                            // Screen readers reorder with actions; the grip is a long-press drag.
+                            // Screen readers reorder with actions; the row itself is a long-press drag.
                             .semantics {
                                 customActions = buildList {
                                     if (index > 0) add(CustomAccessibilityAction("Move ${item.name} up") { move(item.id, -1); true })
@@ -260,16 +268,26 @@ fun RoutineEditorScreen(routineId: String?) {
                             }
                             .padding(4.dp),
                     ) {
-                        Row(Modifier.fillMaxWidth().height(64.dp).padding(start = 2.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                Modifier.size(44.dp).reorderGrip(reorder, item.id, onDrag = { dy -> reorder.dragBy(dy, items) { it.id } }),
-                                contentAlignment = Alignment.Center,
-                            ) { Icon(Icons.Grip, if (dragging) c.accent else c.mute, size = 20.dp, contentDescription = "Reorder ${item.name}") }
-                            Column(Modifier.weight(1f).tappable(highlight = false) { expanded = if (isOpen) null else item.id }) {
+                        // The whole row is the target: a tap opens or closes it (chevron included), a hold
+                        // picks it up to reorder.
+                        Row(
+                            Modifier.fillMaxWidth().height(64.dp)
+                                .reorderRow(
+                                    reorder, item.id,
+                                    onTap = { expanded = if (expanded == item.id) null else item.id },
+                                    onDrag = { dy -> reorder.dragBy(dy, items) { it.id } },
+                                    tapLabel = if (isOpen) "Close ${item.name}" else "Edit ${item.name}",
+                                )
+                                .padding(start = 14.dp, end = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
                                 Txt(item.name, size = T.BodyLarge, weight = Bold, maxLines = 1)
                                 Mute("${item.targetSets} sets × ${item.targetReps}${if (timed) " s" else " reps"}", size = T.Caption)
                             }
-                            Icon(Icons.ChevronDown, c.mute, size = 20.dp, modifier = Modifier.graphicsLayer { rotationZ = 180f * open })
+                            Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                                Icon(Icons.ChevronDown, c.mute, size = 20.dp, modifier = Modifier.graphicsLayer { rotationZ = 180f * open })
+                            }
                         }
                         AnimatedVisibility(
                             isOpen,
@@ -282,7 +300,10 @@ fun RoutineEditorScreen(routineId: String?) {
                                 Box(Modifier.fillMaxWidth().glassCard(RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 12.dp)) {
                                     BareField(item.note.orEmpty(), { text -> update { it.copy(note = text.ifEmpty { null }) } }, Modifier.fillMaxWidth(), placeholder = "Note", size = T.Label, weight = androidx.compose.ui.text.font.FontWeight.Normal, label = "Note for ${item.name}")
                                 }
-                                TextButton("Remove from routine", color = c.danger) { remove(item.id) }
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    TextButton("Rename") { renaming = item.id }
+                                    TextButton("Remove from routine", color = c.danger) { remove(item.id) }
+                                }
                             }
                         }
                     }
@@ -324,6 +345,30 @@ fun RoutineEditorScreen(routineId: String?) {
         },
         onDismiss = { addOpen = false },
     )
+    RenameItemSheet(
+        item = renaming?.let { id -> items.firstOrNull { it.id == id } },
+        exercises = library,
+        ownerId = session.user.id,
+        onSave = { newName, link, updateLibrary ->
+            val at = items.indexOfFirst { it.id == renaming }
+            if (at >= 0) {
+                val cur = items[at]
+                if (link != null) {
+                    // Linked to a lift tracked the other way (time or reps), the target starts over.
+                    val wasTimed = exercises[cur.exerciseId]?.isTimed == true
+                    val reps = if (wasTimed == link.isTimed) cur.targetReps else if (link.isTimed) 30 else 8
+                    items[at] = cur.copy(exerciseId = link.id, name = link.name, targetReps = reps)
+                } else if (updateLibrary) {
+                    // The library rename reaches every routine item of this lift, so the draft's too.
+                    items.indices.forEach { i -> if (items[i].exerciseId == cur.exerciseId) items[i] = items[i].copy(name = newName) }
+                    scope.launch { session.repository.renameExercise(cur.exerciseId, newName) }
+                } else {
+                    items[at] = cur.copy(name = newName)
+                }
+            }
+        },
+        onDismiss = { renaming = null },
+    )
     ConfirmSheet(
         open = deletePrompt,
         title = "Delete ${existing?.name ?: "routine"}?",
@@ -362,5 +407,43 @@ private fun StepperRow(label: String, value: Int, min: Int, max: Int, step: Int 
         CircleButton(Icons.Minus, "Fewer $label".lowercase(), enabled = value > min, repeatable = true) { onChange(stepDown(value, step, min, max)) }
         Txt("$value", Modifier.width(48.dp), size = T.SheetTitle, weight = ExtraBold, tabular = true, align = androidx.compose.ui.text.style.TextAlign.Center)
         CircleButton(Icons.Plus, "More $label".lowercase(), enabled = value < max, repeatable = true) { onChange(stepUp(value, step, min, max)) }
+    }
+}
+
+/**
+ * Rename an exercise in the routine, or link it to another lift by typing that lift's name. The
+ * library copy can be renamed too when it's the user's own ([ownerId]).
+ */
+@Composable
+private fun RenameItemSheet(
+    item: RoutineItem?,
+    exercises: List<Exercise>,
+    ownerId: String,
+    onSave: (newName: String, linkTo: Exercise?, updateLibrary: Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    var updateLibrary by remember { mutableStateOf(false) }
+    LaunchedEffect(item?.id) { item?.let { name = it.name; updateLibrary = false } }
+    val shown = rememberLast(item)
+    BottomSheet(open = item != null, onDismiss = onDismiss, title = "Rename exercise") {
+        val e = shown ?: return@BottomSheet
+        Txt("Rename exercise", Modifier.padding(horizontal = 6.dp), size = T.SheetTitle, weight = ExtraBold)
+        Spacer(Modifier.height(12.dp))
+        Box(Modifier.fillMaxWidth().milky(RoundedCornerShape(20.dp)).padding(horizontal = 18.dp, vertical = 16.dp)) {
+            BareField(name, { name = it.take(MAX_EXERCISE_NAME) }, Modifier.fillMaxWidth(), placeholder = "Exercise name", imeAction = ImeAction.Done, label = "Exercise name")
+        }
+        val q = name.trim()
+        val link = renameLinkTarget(exercises, q, e.exerciseId, ownerId)
+        if (link != null) Mute("Links this to ${link.name} in your library.", Modifier.padding(8.dp, 10.dp), size = T.Small)
+        Spacer(Modifier.height(8.dp))
+        // A partner's exercise isn't yours to rename in the library.
+        val canUpdateLibrary = link == null && exercises.any { it.id == e.exerciseId && it.owner == ownerId }
+        if (canUpdateLibrary) Check("Also rename in exercise library", updateLibrary) { updateLibrary = it }
+        Spacer(Modifier.height(14.dp))
+        PrimaryButton("Save", enabled = q.isNotEmpty()) {
+            if (item != null && (q != e.name || link != null)) onSave(q, link, canUpdateLibrary && updateLibrary)
+            onDismiss()
+        }
     }
 }
