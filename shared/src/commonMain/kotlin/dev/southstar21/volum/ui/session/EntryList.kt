@@ -150,8 +150,11 @@ fun ActiveEntryCard(
     preferred: WeightUnit,
     actions: EntryActions,
     modifier: Modifier = Modifier,
-    /** The drag grip, when the card can be reordered; it leads the header. */
-    grip: (@Composable () -> Unit)? = null,
+    /**
+     * When the card can be reordered: the gesture for its name and summary, which taps to open the card
+     * and holds to drag it (see reorderRow). It replaces the plain tap there.
+     */
+    holdToReorder: Modifier? = null,
 ) {
     val c = Volum.colors
     val doneCount = entry.sets.count { it.done }
@@ -161,9 +164,8 @@ fun ActiveEntryCard(
         val gap by androidx.compose.animation.core.animateDpAsState(if (expanded) 10.dp else 0.dp, Springs.settle(), label = "header gap")
         // The spring overshoots past 0 as it closes, and padding can't be negative.
         // No end padding: the buttons' 48 dp touch targets leave their circles 5 dp in from the edge.
-        Row(Modifier.fillMaxWidth().padding(start = if (grip != null) 0.dp else 8.dp, bottom = gap.coerceAtLeast(0.dp)), verticalAlignment = Alignment.CenterVertically) {
-            grip?.invoke()
-            Column(Modifier.weight(1f).tappable(highlight = false) { actions.onExpand(entry) }) {
+        Row(Modifier.fillMaxWidth().padding(start = 8.dp, bottom = gap.coerceAtLeast(0.dp)), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).then(holdToReorder ?: Modifier.tappable(highlight = false) { actions.onExpand(entry) })) {
                 Txt(entry.name, size = T.Big, weight = Bold, maxLines = 2)
                 Spacer(Modifier.height(2.dp))
                 when {
