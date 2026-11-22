@@ -794,17 +794,24 @@ fun Toolbar(modifier: Modifier = Modifier, leading: @Composable () -> Unit = { S
  * the name it stands for, and the bare letter alone says nothing.
  */
 @Composable
-fun Avatar(name: String, modifier: Modifier = Modifier, size: Dp = 44.dp, warm: Boolean = false, contentDescription: String? = null) {
+fun Avatar(name: String, modifier: Modifier = Modifier, size: Dp = 44.dp, warm: Boolean = false, contentDescription: String? = null, photoUrl: String? = null) {
     val c = Volum.colors
     val letter = name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    // The letter until the photo has loaded, and for good when there is none or it can't be fetched.
+    val photo = rememberPhoto(photoUrl)
     Box(
         modifier.size(size).then(
-            if (warm) Modifier.clip(CircleShape).background(Brush.linearGradient(listOf(c.warmTop, c.warmBottom)))
+            if (photo != null) Modifier.clip(CircleShape).background(c.glass).border(1.5.dp, c.rim, CircleShape)
+            else if (warm) Modifier.clip(CircleShape).background(Brush.linearGradient(listOf(c.warmTop, c.warmBottom)))
             else Modifier.liquidGlass(CircleShape),
         ).clearAndSetSemantics { contentDescription?.let { this.contentDescription = it } },
         contentAlignment = Alignment.Center,
     ) {
-        Txt(letter, size = (size.value * 0.4f).sp, weight = ExtraBold, color = if (warm) c.warmInk else c.accent)
+        if (photo != null) {
+            androidx.compose.foundation.Image(photo, null, Modifier.matchParentSize().clip(CircleShape), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+        } else {
+            Txt(letter, size = (size.value * 0.4f).sp, weight = ExtraBold, color = if (warm) c.warmInk else c.accent)
+        }
     }
 }
 

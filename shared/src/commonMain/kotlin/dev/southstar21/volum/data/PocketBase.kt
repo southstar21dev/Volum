@@ -6,16 +6,23 @@ import kotlin.concurrent.Volatile
 import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.prepareGet
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
+import io.ktor.http.encodeURLParameter
 import io.ktor.http.encodeURLPathPart
 import io.ktor.utils.io.readLine
 import kotlinx.coroutines.CancellationException
@@ -181,6 +188,47 @@ class PocketBase(
 
     suspend fun update(collection: String, id: String, body: JsonObject): JsonObject =
         call(HttpMethod.Patch, "/api/collections/$collection/records/${id.encodeURLPathPart()}", body).record()
+
+    // ---- Files ------------------------------------------------------------------------------
+
+    /** Replaces the file in [field] of a record with [bytes], as a multipart PATCH. */
+    suspend fun uploadFile(collection: String, id: String, field: String, bytes: ByteArray, fileName: String, mime: String): JsonObject =
+        call(HttpMethod.Patch, "/api/collections/$collection/records/${id.encodeURLPathPart()}") {
+            setBody(
+                MultiPartFormDataContent(
+                    formData {
+                        append(
+                            field,
+                            bytes,
+                            Headers.build {
+                                append(HttpHeaders.ContentType, mime)
+                                append(HttpHeaders.ContentDisposition, "filename=\"$fileName\"")
+                            },
+                        )
+                    },
+                ),
+            )
+        }.record()
+
+    /** Empties the file field [field] of a record. */
+    suspend fun clearFile(collection: String, id: String, field: String): JsonObject =
+        update(collection, id, buildJsonObject { put(field, "") })
+
+    /** Where a stored file is served; [thumb] is one of the field's thumb sizes ("256x256"). */
+    fun fileUrl(collection: String, recordId: String, fileName: String, thumb: String? = null): String =
+        url("/api/files/$collection/${recordId.encodeURLPathPart()}/${fileName.encodeURLPathPart()}") +
+            (thumb?.let { "?thumb=${it.encodeURLParameter()}" } ?: "")
+
+    /** A file's bytes from [url] (one of [fileUrl]'s), or null when it couldn't be fetched. */
+    suspend fun download(url: String): ByteArray? = try {
+        val response = http.get(url) { identify() }
+        if (response.status.value in 200..299) response.bodyAsBytes() else null
+    } catch (e: CancellationException) {
+        currentCoroutineContext().ensureActive()
+        null
+    } catch (_: Throwable) {
+        null
+    }
 
     /** A custom route (pb_hooks), like the JS SDK's pb.send. */
     suspend fun send(path: String, method: HttpMethod = HttpMethod.Get, body: JsonElement? = null): JsonElement =

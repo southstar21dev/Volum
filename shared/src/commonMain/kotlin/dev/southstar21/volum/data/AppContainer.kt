@@ -134,6 +134,9 @@ class AppContainer internal constructor(
     private val _updateRequired = MutableStateFlow<UpdateRequired?>(null)
     val updateRequired: StateFlow<UpdateRequired?> = _updateRequired.asStateFlow()
 
+    /** Profile photos, cached on disk so they still show offline. */
+    val images = ImageCache(Path(root, IMAGE_CACHE_DIR), scope, ioDispatcher) { url -> pb.download(url) }
+
     /** One session at a time: a second login waits for the first to finish opening, then replaces it. */
     private val sessionLock = Mutex()
 
@@ -225,6 +228,7 @@ class AppContainer internal constructor(
         id = record.getValue("id").jsonPrimitive.content,
         email = record["email"]?.jsonPrimitive?.contentOrNull.orEmpty(),
         name = record["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        avatar = record["avatar"]?.jsonPrimitive?.contentOrNull.orEmpty(),
     )
 
     private fun persistAuth(token: String, user: AuthUser) {
@@ -290,7 +294,31 @@ class AppContainer internal constructor(
 
     suspend fun setDisplayName(name: String) {
         val user = _user.value ?: return
-        val record = pb.update("users", user.id, buildJsonObject { put("name", name) })
+        applyUserRecord(user, pb.update("users", user.id, buildJsonObject { put("name", name) }))
+    }
+
+    /** Uploads [jpeg] as the signed-in user's profile photo, replacing any earlier one. */
+    suspend fun setAvatar(jpeg: ByteArray) {
+        val user = _user.value ?: return
+        val record = pb.uploadFile("users", user.id, AVATAR_FIELD, jpeg, "avatar.jpg", "image/jpeg")
+        // Shown at once from what was uploaded: the server's thumbnail is the same picture.
+        record["avatar"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)?.let { file ->
+            images.put(pb.fileUrl("users", user.id, file, AVATAR_THUMB), jpeg)
+        }
+        applyUserRecord(user, record)
+    }
+
+    suspend fun removeAvatar() {
+        val user = _user.value ?: return
+        applyUserRecord(user, pb.clearFile("users", user.id, AVATAR_FIELD))
+    }
+
+    /** Where [userId]'s profile photo [file] is served, or null when they have none. */
+    fun avatarUrl(userId: String, file: String): String? =
+        file.takeIf(String::isNotBlank)?.let { pb.fileUrl("users", userId, it, AVATAR_THUMB) }
+
+    /** Takes the users record a profile change returned as the signed-in user, unless they changed meanwhile. */
+    private fun applyUserRecord(user: AuthUser, record: JsonObject) {
         // Signed out, or in as someone else, while the update was in flight.
         if (_user.value?.id != user.id) return
         val updated = userOf(record)
@@ -443,6 +471,10 @@ class AppContainer internal constructor(
         const val AUTH_REFRESH_MS = 12 * 60 * 60 * 1000L
         const val AUTH_CHECK_MS = 15 * 60 * 1000L
         const val EXPIRY_RETRY_MS = 60 * 1000L
+        const val IMAGE_CACHE_DIR = "image-cache"
+        const val AVATAR_FIELD = "avatar"
+        /** One of the thumb sizes in backend/pb_migrations/1759600014_user_avatar.js. */
+        const val AVATAR_THUMB = "256x256"
     }
 }
 

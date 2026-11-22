@@ -123,6 +123,8 @@ object Icons {
     val Refresh = stroke("refresh", "M21 12a9 9 0 1 1-3-6.7L21 8", "M21 3v5h-5")
     val ArrowRight = stroke("arrowRight", "M5 12h14M13 6l6 6-6 6")
     val ArrowUpRight = stroke("arrowUpRight", "M7 17L17 7M9 7h8v8")
+    val Camera = stroke("camera", "M3 8a2 2 0 0 1 2-2h2l2-2h6l2 2h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z", circle(12f, 13f, 3.5f))
+    val Photo = stroke("photo", rect(3f, 3f, 18f, 18f, 4f), circle(9f, 9f, 2f), "M21 15l-5-5L5 21")
     val Copy = stroke("copy", rect(8f, 8f, 13f, 13f, 2f), "M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3")
 }
 
