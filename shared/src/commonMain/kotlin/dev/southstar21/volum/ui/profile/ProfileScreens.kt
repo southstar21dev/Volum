@@ -1,6 +1,16 @@
 package dev.southstar21.volum.ui.profile
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.semantics.contentDescription
+import dev.southstar21.volum.platform.encodeJpeg
+import dev.southstar21.volum.platform.rememberPhotoPicker
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import dev.southstar21.volum.ui.theme.T
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +52,7 @@ import dev.southstar21.volum.ui.LocalNav
 import dev.southstar21.volum.ui.LocalSession
 import dev.southstar21.volum.ui.Route
 import dev.southstar21.volum.ui.components.Avatar
+import dev.southstar21.volum.ui.components.photoUrl
 import dev.southstar21.volum.ui.components.BareField
 import dev.southstar21.volum.ui.components.BottomSheet
 import dev.southstar21.volum.ui.components.CircleButton
@@ -100,6 +111,55 @@ fun ProfileScreen() {
     val partner = snapshot.partner
     var draft by rememberSaveable { mutableStateOf(name) }
     var nameError by remember { mutableStateOf<String?>(null) }
+    val photoUrl = user?.photoUrl()
+    val hasPhoto = !user?.avatar.isNullOrBlank()
+    var photoSheet by remember { mutableStateOf(false) }
+    var removePhoto by remember { mutableStateOf(false) }
+    // The picked photo while it's being cropped; not saved across process death (it can be megabytes).
+    var pickedPhoto by remember { mutableStateOf<ByteArray?>(null) }
+    var savingPhoto by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
+    var photoError by remember { mutableStateOf<String?>(null) }
+    val pickPhoto = rememberPhotoPicker(
+        onPicked = { pickedPhoto = it; saveError = null; photoError = null },
+        onError = { photoError = "Couldn't open that photo. Try another one." },
+    )
+
+    fun savePhoto(cropped: ImageBitmap) {
+        if (savingPhoto) return
+        savingPhoto = true
+        saveError = null
+        scope.launch {
+            try {
+                val jpeg = withContext(Dispatchers.Default) { encodeJpeg(cropped, 85) }
+                app.setAvatar(jpeg)
+                pickedPhoto = null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: PbException) {
+                saveError = if (e.status == 0) "You're offline. Try again once you're connected." else e.fieldMessage ?: "Couldn't save your photo. Try again."
+            } catch (e: Exception) {
+                saveError = "Couldn't save your photo. Try again."
+            } finally {
+                savingPhoto = false
+            }
+        }
+    }
+
+    fun removeAvatar() {
+        photoError = null
+        scope.launch {
+            try {
+                app.removeAvatar()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: PbException) {
+                photoError = if (e.status == 0) "You're offline. Try again once you're connected." else "Couldn't remove your photo. Try again."
+            } catch (e: Exception) {
+                photoError = "Couldn't remove your photo. Try again."
+            }
+        }
+    }
 
     fun unpairPartner() {
         if (unpairing) return
@@ -125,7 +185,17 @@ fun ProfileScreen() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         TopInset(26.dp)
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Avatar(name, size = 64.dp)
+            Box(
+                Modifier.size(64.dp).tappable { photoError = null; photoSheet = true }
+                    .semantics { contentDescription = if (hasPhoto) "Change profile photo" else "Add profile photo" },
+            ) {
+                Avatar(name, size = 64.dp, photoUrl = photoUrl)
+                Box(
+                    Modifier.align(Alignment.BottomEnd).offset(x = 4.dp, y = 4.dp).size(26.dp)
+                        .clip(CircleShape).background(c.sheet).padding(2.dp).clip(CircleShape).background(c.accent),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Camera, c.onAccent, size = 14.dp) }
+            }
             Column(Modifier.weight(1f)) {
                 Txt(name, size = T.Entry, weight = ExtraBold, tracking = T.TitleTracking, maxLines = 1)
                 Mute(user?.email.orEmpty(), size = T.Label, maxLines = 1)
@@ -134,10 +204,12 @@ fun ProfileScreen() {
             GlassButton("Edit", height = 40.dp) { draft = name; nameError = null; editName = true }
         }
 
+        photoError?.let { ErrorText(it, Modifier.padding(start = 24.dp, end = 24.dp, top = 10.dp), weight = Semibold) }
+
         Label("Training together")
         if (partner != null) {
             Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().glassCard(RoundedCornerShape(24.dp)).padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Avatar(partner.displayName, size = 44.dp, warm = true)
+                Avatar(partner.displayName, size = 44.dp, warm = true, photoUrl = partner.photoUrl())
                 Column(Modifier.weight(1f)) {
                     Txt(partner.displayName, size = T.Body, weight = Bold, maxLines = 1)
                     Mute("${partner.email}, sharing routines and lifts", size = T.Caption, maxLines = 2)
@@ -226,6 +298,47 @@ fun ProfileScreen() {
             }
         }
     }
+    BottomSheet(open = photoSheet, onDismiss = { photoSheet = false }, title = "Profile photo") {
+        Row(Modifier.padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Avatar(name, size = 56.dp, photoUrl = photoUrl)
+            Column {
+                Txt("Profile photo", size = T.SheetTitle, weight = ExtraBold)
+                Mute("Your partner sees this photo.")
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Column(Modifier.fillMaxWidth().milky(RoundedCornerShape(20.dp))) {
+            PhotoAction(Icons.Photo, if (hasPhoto) "Choose a new photo" else "Choose from library", c.ink, chevron = true) {
+                photoSheet = false
+                pickPhoto()
+            }
+            if (hasPhoto) {
+                Divider(inset = 18.dp)
+                PhotoAction(Icons.Trash, "Remove photo", c.danger) {
+                    photoSheet = false
+                    removePhoto = true
+                }
+            }
+        }
+    }
+    ConfirmSheet(
+        open = removePhoto,
+        title = "Remove your photo?",
+        message = "You and your partner will see your initial instead.",
+        confirm = "Remove photo",
+        onConfirm = ::removeAvatar,
+        onDismiss = { removePhoto = false },
+    )
+    pickedPhoto?.let { photo ->
+        AvatarCropScreen(
+            photo = photo,
+            busy = savingPhoto,
+            error = saveError,
+            onCancel = { pickedPhoto = null; saveError = null },
+            onChooseAnother = { pickPhoto() },
+            onSave = ::savePhoto,
+        )
+    }
     ConfirmSheet(
         open = unpair,
         title = "Unpair from ${partner?.displayName ?: "partner"}?",
@@ -261,6 +374,15 @@ private suspend fun retrySync(sync: dev.southstar21.volum.data.SyncEngine) {
         throw e
     } catch (e: Exception) {
         // The status row already shows the failure; a second tap tries again.
+    }
+}
+
+@Composable
+private fun PhotoAction(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String, tint: androidx.compose.ui.graphics.Color, chevron: Boolean = false, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().height(58.dp).tappable(onClick = onClick).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Icon(icon, tint, size = 22.dp)
+        Txt(text, Modifier.weight(1f), size = T.Body, weight = Semibold, color = tint)
+        if (chevron) Icon(Icons.ChevronRight, Volum.colors.mute, size = 18.dp)
     }
 }
 
@@ -338,7 +460,7 @@ fun PairPartnerScreen() {
             Mute("Waiting for an answer", Modifier.padding(start = 22.dp, top = 18.dp, bottom = 8.dp), weight = Bold)
             snapshot.outgoing.forEach { req ->
                 Row(Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp).fillMaxWidth().glassCard(RoundedCornerShape(24.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Avatar(req.to.displayName, size = 40.dp, warm = true)
+                    Avatar(req.to.displayName, size = 40.dp, warm = true, photoUrl = req.to.photoUrl())
                     Column(Modifier.weight(1f)) {
                         Txt(req.to.displayName, size = T.Body, weight = Bold, maxLines = 1)
                         Mute(req.to.email, size = T.Caption, maxLines = 1)
@@ -352,7 +474,7 @@ fun PairPartnerScreen() {
             snapshot.incoming.forEach { req ->
                 Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp).fillMaxWidth().glassCard(RoundedCornerShape(24.dp)).padding(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Avatar(req.from.displayName, size = 44.dp, warm = true)
+                        Avatar(req.from.displayName, size = 44.dp, warm = true, photoUrl = req.from.photoUrl())
                         Column(Modifier.weight(1f)) {
                             Txt(req.from.displayName, size = T.Body, weight = Bold)
                             Mute(req.from.email, size = T.Caption)

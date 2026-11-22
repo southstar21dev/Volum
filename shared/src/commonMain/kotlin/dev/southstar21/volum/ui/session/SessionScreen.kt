@@ -25,6 +25,8 @@ import dev.southstar21.volum.data.SyncState
 import dev.southstar21.volum.ui.components.ReorderAutoScroll
 import dev.southstar21.volum.ui.components.reorderRow
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -87,6 +89,7 @@ import dev.southstar21.volum.ui.rememberNow
 import dev.southstar21.volum.ui.workoutsState
 import dev.southstar21.volum.ui.components.ActionSheet
 import dev.southstar21.volum.ui.components.Avatar
+import dev.southstar21.volum.ui.components.photoUrl
 import dev.southstar21.volum.ui.components.CircleButton
 import dev.southstar21.volum.ui.components.ConfirmSheet
 import dev.southstar21.volum.ui.components.GlassCard
@@ -475,8 +478,9 @@ fun SessionScreen(workoutId: String) {
 
             if (partner != null && partnerWorkout != null) {
                 Box(Modifier.size(58.dp).tappable { nav.push(Route.PartnerSession(partnerWorkout.id)) }.semantics { contentDescription = "Open ${partner.displayName}'s live workout" }) {
-                    Avatar(partner.displayName, size = 58.dp)
-                    Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(9.dp).accentGel(CircleShape))
+                    Avatar(partner.displayName, size = 58.dp, photoUrl = partner.photoUrl())
+                    // Ringed, so the live dot stays visible on a photo as well as on the letter.
+                    Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(13.dp).clip(CircleShape).background(Color.White).padding(2.dp).accentGel(CircleShape))
                 }
             }
             Box(

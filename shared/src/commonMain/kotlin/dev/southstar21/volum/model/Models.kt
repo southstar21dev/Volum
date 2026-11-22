@@ -140,10 +140,16 @@ data class OutboxItem(
 )
 
 @Serializable
-data class AuthUser(val id: String, val email: String, val name: String)
+data class AuthUser(
+    val id: String,
+    val email: String,
+    val name: String,
+    /** The profile photo's stored file name on the users record; empty when there is none. */
+    val avatar: String = "",
+)
 
 @Serializable
-data class PartnerUser(val id: String, val name: String = "", val email: String = "") {
+data class PartnerUser(val id: String, val name: String = "", val email: String = "", val avatar: String = "") {
     val displayName: String get() = name.ifBlank { email }
 }
 

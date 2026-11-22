@@ -73,7 +73,7 @@ private const val ACCOUNT_EPOCH = "1970-01-01 00:00:00.000Z"
  * virtual clock. Every request is logged; tokens name their user.
  */
 private class AccountServer(scope: TestScope) {
-    class Req(val method: HttpMethod, val path: String, val filter: String?, val auth: String?, val body: JsonElement?) {
+    class Req(val method: HttpMethod, val path: String, val filter: String?, val auth: String?, val body: JsonElement?, val contentType: String? = null) {
         fun isList(collection: String) = method == HttpMethod.Get && path == "/api/collections/$collection/records"
         fun isPush() = path.startsWith("/api/collections/") && !path.startsWith("/api/collections/users/") &&
             (method == HttpMethod.Patch || method == HttpMethod.Post)
@@ -110,7 +110,7 @@ private class AccountServer(scope: TestScope) {
                 addHandler { data ->
                     val path = data.url.encodedPath
                     val body = (data.body as? TextContent)?.text?.let { runCatching { VolumJson.parseToJsonElement(it) }.getOrNull() }
-                    val req = Req(data.method, path, data.url.parameters["filter"], data.headers[HttpHeaders.Authorization], body)
+                    val req = Req(data.method, path, data.url.parameters["filter"], data.headers[HttpHeaders.Authorization], body, data.body.contentType?.withoutParameters()?.toString())
                     log.update { it + req }
                     val reply = reply(req)
                     respond(reply.body, HttpStatusCode.fromValue(reply.status), jsonHeaders)
@@ -130,7 +130,7 @@ private class AccountServer(scope: TestScope) {
 
     private fun authJson(token: String, user: AuthUser) = buildJsonObject {
         put("token", token)
-        putJsonObject("record") { put("id", user.id); put("email", user.email); put("name", user.name) }
+        putJsonObject("record") { put("id", user.id); put("email", user.email); put("name", user.name); put("avatar", user.avatar) }
     }.toString()
 
     private suspend fun reply(req: Req): Reply = when {
@@ -560,5 +560,58 @@ class AppContainerTest {
         assertEquals("drop", kept["tag"]?.jsonPrimitive?.contentOrNull)
         assertEquals("slow", kept["note"]?.jsonPrimitive?.contentOrNull)
         assertEquals("30", kept["seconds"]?.jsonPrimitive?.contentOrNull)
+    }
+
+    // ---- Profile photo ----------------------------------------------------------------------
+
+    @Test fun aNewPhotoIsUploadedAsAFileKeptInTheSignInAndCachedWithoutDownloadingIt() = appTest { rig ->
+        val app = rig.start()
+        app.login(alex.email, "pw")
+        rig.server.records = { req ->
+            if (req.method == HttpMethod.Patch && req.path == "/api/collections/users/records/ua") {
+                AccountServer.Reply(200, """{"id":"ua","email":"alex@example.com","name":"Alex","avatar":"avatar_k3x9.jpg"}""")
+            } else null
+        }
+        val jpeg = byteArrayOf(1, 2, 3, 4)
+
+        app.setAvatar(jpeg)
+
+        val upload = rig.server.log.value.single { it.path == "/api/collections/users/records/ua" }
+        assertEquals(HttpMethod.Patch, upload.method)
+        assertEquals("multipart/form-data", upload.contentType)
+        assertEquals("avatar_k3x9.jpg", app.user.value?.avatar)
+        assertEquals("avatar_k3x9.jpg", app.session.value?.user?.avatar)
+        runCurrent() // the sign-in is saved by the background disk writer
+        assertTrue(rig.secrets.values["auth"]!!.contains("avatar_k3x9.jpg"), "the saved sign-in has the photo")
+        val url = assertNotNull(app.avatarUrl("ua", "avatar_k3x9.jpg"))
+        assertEquals("https://pb.test/api/files/users/ua/avatar_k3x9.jpg?thumb=256x256", url)
+        assertTrue(jpeg.contentEquals(app.images.load(url)))
+        assertTrue(rig.server.log.value.none { it.path.startsWith("/api/files/") }, "the uploaded photo isn't downloaded again")
+    }
+
+    @Test fun removingThePhotoClearsTheField() = appTest { rig ->
+        rig.server.addUser(alex.copy(avatar = "old.jpg"))
+        val app = rig.start()
+        app.login(alex.email, "pw")
+        assertEquals("old.jpg", app.user.value?.avatar, "signing in reads the photo")
+        rig.server.records = { req ->
+            if (req.method == HttpMethod.Patch && req.path == "/api/collections/users/records/ua") {
+                AccountServer.Reply(200, """{"id":"ua","email":"alex@example.com","name":"Alex","avatar":""}""")
+            } else null
+        }
+
+        app.removeAvatar()
+
+        val clear = rig.server.log.value.single { it.path == "/api/collections/users/records/ua" }
+        assertEquals("", clear.body!!.jsonObject["avatar"]!!.jsonPrimitive.content)
+        assertEquals("", app.user.value?.avatar)
+        assertNull(app.avatarUrl("ua", ""))
+    }
+
+    @Test fun aSignInSavedBeforePhotosStillLoads() = appTest { rig ->
+        rig.saveSignIn(alex, "tok")
+        val app = rig.start()
+        assertEquals(alex.id, app.user.value?.id)
+        assertEquals("", app.user.value?.avatar)
     }
 }

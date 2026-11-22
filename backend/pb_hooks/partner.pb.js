@@ -6,6 +6,7 @@ routerAdd(
       id: record.id,
       name: record.getString("name"),
       email: record.email(),
+      avatar: record.getString("avatar"),
     });
 
     const me = e.app.findRecordById("users", e.auth.id);
@@ -71,6 +72,7 @@ routerAdd(
       id: record.id,
       name: record.getString("name"),
       email: record.email(),
+      avatar: record.getString("avatar"),
     });
 
     const body = e.requestInfo().body || {};
@@ -134,6 +136,7 @@ routerAdd(
       id: record.id,
       name: record.getString("name"),
       email: record.email(),
+      avatar: record.getString("avatar"),
     });
 
     const body = e.requestInfo().body || {};

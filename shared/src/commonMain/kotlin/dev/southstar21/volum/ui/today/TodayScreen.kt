@@ -81,6 +81,7 @@ import dev.southstar21.volum.ui.routinesState
 import dev.southstar21.volum.ui.workoutsState
 import dev.southstar21.volum.ui.components.ActionSheet
 import dev.southstar21.volum.ui.components.Avatar
+import dev.southstar21.volum.ui.components.photoUrl
 import dev.southstar21.volum.ui.components.CircleButton
 import dev.southstar21.volum.ui.components.ConfirmSheet
 import dev.southstar21.volum.ui.components.GlassCard
@@ -232,7 +233,7 @@ fun TodayScreen() {
             LiveRow(
                 title = "${partnerUser.displayName} is training",
                 subtitle = "${partnerWorkout.routineName}, live now",
-                avatar = { Avatar(partnerUser.displayName, size = 38.dp, warm = true) },
+                avatar = { Avatar(partnerUser.displayName, size = 38.dp, warm = true, photoUrl = partnerUser.photoUrl()) },
                 onClick = { nav.push(Route.PartnerSession(partnerWorkout.id)) },
             )
         }

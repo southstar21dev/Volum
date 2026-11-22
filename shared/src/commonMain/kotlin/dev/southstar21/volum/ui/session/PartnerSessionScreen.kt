@@ -50,6 +50,7 @@ import dev.southstar21.volum.ui.LocalSession
 import dev.southstar21.volum.ui.exercisesState
 import dev.southstar21.volum.ui.components.ActionSheet
 import dev.southstar21.volum.ui.components.Avatar
+import dev.southstar21.volum.ui.components.photoUrl
 import dev.southstar21.volum.ui.components.CircleButton
 import dev.southstar21.volum.ui.components.GlassButton
 import dev.southstar21.volum.ui.components.Mute
@@ -216,7 +217,7 @@ fun PartnerSessionScreen(workoutId: String) {
                 },
                 heading = {
                     Row(Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Avatar(partnerName, size = 52.dp, warm = true)
+                        Avatar(partnerName, size = 52.dp, warm = true, photoUrl = snapshot.partner?.photoUrl())
                         Column {
                             Txt("$partnerName, ${w.routineName}", size = T.Headline, weight = ExtraBold, tracking = T.TitleTracking, maxLines = 2)
                             Mute("$done of $total sets, ${w.entries.count { it.isComplete() }} of ${plural(w.entries.size, "exercise")}", size = T.Label)
