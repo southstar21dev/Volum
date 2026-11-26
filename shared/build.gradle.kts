@@ -62,6 +62,14 @@ val generateMergeFixtures = tasks.register("generateMergeFixtures") {
     }
 }
 
+// Android lint reads the generated directory as a plain path, so the source-set wiring below doesn't
+// carry the task dependency to it.
+tasks.configureEach {
+    if (name == "lintAnalyzeAndroidHostTest" || name == "generateAndroidHostTestLintModel") {
+        dependsOn(generateMergeFixtures)
+    }
+}
+
 kotlin {
     android {
         namespace = "dev.southstar21.volum.shared"
