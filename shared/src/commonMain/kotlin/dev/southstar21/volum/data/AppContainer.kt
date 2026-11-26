@@ -369,6 +369,9 @@ class AppContainer internal constructor(
      * signs out, unless the sign-in changed (sign-out, another sign-in) while the request was in
      * flight. Concurrent callers share one request.
      */
+    /** Whether the server still accepts the sign-in (see SyncEngine's authStillValid); no answer counts as yes. */
+    internal suspend fun authStillValid(): Boolean = refreshAuth() != AuthCheck.Invalid
+
     private suspend fun refreshAuth(): AuthCheck {
         val running = authRefresh?.takeIf { it.isActive } ?: scope.async { doRefreshAuth() }.also { authRefresh = it }
         return running.await()
@@ -487,6 +490,7 @@ class UserSession(val app: AppContainer, var user: AuthUser, dir: Path) {
         store, app.pb, repository, user.id, scope,
         hasPartner = { partner.snapshot.value.partner != null },
         beforePush = { app.ensureFreshAuth() },
+        authStillValid = { app.authStillValid() },
     ) { app.onAuthExpired(this@UserSession) }
     val partner = PartnerRepository(app.pb, dir, scope) { previous, current -> onPartnerChanged(previous, current) }
 

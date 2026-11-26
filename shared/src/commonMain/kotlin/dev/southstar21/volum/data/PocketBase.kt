@@ -28,11 +28,14 @@ import io.ktor.utils.io.readLine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.random.Random
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -84,6 +87,8 @@ class PocketBase(
         body: JsonElement? = null,
         configure: HttpRequestBuilder.() -> Unit = {},
     ): JsonElement {
+        // Encoding a big payload (a workout with many sets) is kept off the calling (main) thread.
+        val encoded = body?.let { withContext(Dispatchers.Default) { VolumJson.encodeToString(JsonElement.serializer(), it) } }
         // The body is read inside the try too: a connection dropped after the headers is a network
         // failure like any other, not an exception that escapes to the caller's scope.
         val (status, text) = try {
@@ -91,9 +96,9 @@ class PocketBase(
                 this.method = method
                 identify()
                 token?.let { header("Authorization", it) }
-                if (body != null) {
+                if (encoded != null) {
                     contentType(ContentType.Application.Json)
-                    setBody(VolumJson.encodeToString(JsonElement.serializer(), body))
+                    setBody(encoded)
                 }
                 configure()
             }
@@ -106,20 +111,27 @@ class PocketBase(
         } catch (e: Throwable) {
             throw PbException(0, e.message ?: "Network error")
         }
-        val json = runCatching { VolumJson.parseToJsonElement(text) }.getOrNull()
+        // A page of records can be megabytes: parsed off the main thread, small replies inline.
+        val json = if (text.length > INLINE_JSON_LIMIT) {
+            withContext(Dispatchers.Default) { runCatching { VolumJson.parseToJsonElement(text) }.getOrNull() }
+        } else {
+            runCatching { VolumJson.parseToJsonElement(text) }.getOrNull()
+        }
         if (status !in 200..299) {
             val obj = json as? JsonObject
             val message = obj?.get("message")?.jsonPrimitive?.contentOrNull ?: "Request failed ($status)"
-            if (status == UPDATE_REQUIRED) {
-                val minVersion = ((obj?.get("data") as? JsonObject)?.get("minVersion") as? JsonPrimitive)?.contentOrNull
-                onUpdateRequired?.invoke(minVersion?.takeIf(String::isNotBlank))
-            }
+            if (status == UPDATE_REQUIRED) reportUpdateRequired(obj)
             throw PbException(status, message, obj?.get("data") as? JsonObject)
         }
         // A 2xx whose body isn't JSON (a captive portal's login page, a truncated proxy reply) is
         // a failed exchange with the server; an empty body (204) is a success with nothing to say.
         if (json == null && text.isNotBlank()) throw PbException(0, UNEXPECTED_RESPONSE)
         return json ?: JsonNull
+    }
+
+    private fun reportUpdateRequired(error: JsonObject?) {
+        val minVersion = ((error?.get("data") as? JsonObject)?.get("minVersion") as? JsonPrimitive)?.contentOrNull
+        onUpdateRequired?.invoke(minVersion?.takeIf(String::isNotBlank))
     }
 
     /** Reads a successful response's shape; a reply that doesn't have it is a [PbException] like any other failure. */
@@ -166,7 +178,8 @@ class PocketBase(
         val result = call(HttpMethod.Get, "/api/collections/$collection/records") {
             parameter("page", page)
             parameter("perPage", perPage)
-            parameter("skipTotal", 0)
+            // The total isn't used (pages follow a cursor), so the server can skip counting it.
+            parameter("skipTotal", 1)
             filter?.let { parameter("filter", it) }
             sort?.let { parameter("sort", it) }
         }
@@ -242,7 +255,9 @@ class PocketBase(
      */
     fun realtime(scope: CoroutineScope, topics: List<String>, onEvent: (topic: String, record: JsonObject?) -> Unit): Job =
         scope.launch {
+            var failures = 0
             while (isActive) {
+                var connected = false
                 try {
                     http.prepareGet(url("/api/realtime")) {
                         identify()
@@ -253,6 +268,16 @@ class PocketBase(
                             socketTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
                         }
                     }.execute { response ->
+                        val status = response.status.value
+                        if (status !in 200..299) {
+                            // Not an event stream (426, 401, a proxy's 502): nothing to read, retried with backoff.
+                            if (status == UPDATE_REQUIRED) {
+                                val error = runCatching { VolumJson.parseToJsonElement(response.bodyAsText()).jsonObject }.getOrNull()
+                                reportUpdateRequired(error)
+                            }
+                            return@execute
+                        }
+                        connected = true
                         val channel = response.bodyAsChannel()
                         var event = ""
                         val data = StringBuilder()
@@ -290,11 +315,17 @@ class PocketBase(
                 } catch (_: Throwable) {
                     // Fall through to a short pause and reconnect; callers also poll.
                 }
-                delay(5_000)
+                // A stream that was up and dropped reconnects quickly; one that never opened backs off.
+                failures = if (connected) 0 else failures + 1
+                val base = (REALTIME_RETRY_MS shl (failures - 1).coerceIn(0, 5)).coerceAtMost(REALTIME_MAX_RETRY_MS)
+                delay(base + Random.nextLong(base / 5 + 1))
             }
         }
 
     companion object {
+        private const val INLINE_JSON_LIMIT = 16_384
+        private const val REALTIME_RETRY_MS = 5_000L
+        private const val REALTIME_MAX_RETRY_MS = 120_000L
         private const val UNEXPECTED_RESPONSE = "Unexpected response from server"
         const val APP_VERSION_HEADER = "X-App-Version"
         const val APP_PLATFORM_HEADER = "X-App-Platform"
@@ -302,13 +333,14 @@ class PocketBase(
         /** 426 Upgrade Required: the server's answer to a build older than its minimum. */
         const val UPDATE_REQUIRED = 426
 
+        private val PLACEHOLDER = Regex("\\{:(\\w+)\\}")
+
         /** pb.filter: binds {:name} placeholders as quoted strings. */
-        fun filter(expr: String, params: Map<String, String>): String {
-            var out = expr
-            for ((key, value) in params) {
-                out = out.replace("{:$key}", "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'")
+        fun filter(expr: String, params: Map<String, String>): String =
+            // One pass over the template: a value that itself contains "{:other}" is never substituted again.
+            PLACEHOLDER.replace(expr) { m ->
+                val value = params[m.groupValues[1]] ?: return@replace m.value
+                "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
             }
-            return out
-        }
     }
 }
