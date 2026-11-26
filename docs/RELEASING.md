@@ -128,7 +128,9 @@ same key as the installed app, so **losing the key means every user has to unins
   The release workflow fails rather than publish a build signed with another key.
 - Certificate SHA-256: `AE:86:69:3B:05:F6:EF:FD:40:D0:E4:08:5F:2C:74:A7:E9:67:ED:16:47:3E:F6:6F:20:2B:25:44:05:42:B7:18`
 
-Local release builds use `keystore.properties` when it exists, and the debug key otherwise:
+Local release builds use `keystore.properties` when it exists. Without it, `assembleRelease` makes an
+unsigned APK (CI does this to check R8); add `-Pvolum.allowDebugSigning=true` to sign it with the debug
+key so it installs on your own phone:
 
 ```properties
 storeFile=/absolute/path/to/volum-release.jks
