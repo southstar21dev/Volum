@@ -30,6 +30,7 @@ import io.ktor.utils.io.readLine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -70,6 +71,8 @@ class PocketBase(
     /** Sent with every request so the server can turn away builds it no longer supports (backend/pb_hooks/version_gate.pb.js). */
     private val clientVersion: String? = null,
     private val clientPlatform: String? = null,
+    /** Where request bodies are encoded and responses parsed; tests pass a test dispatcher. */
+    private val defaultDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
     @Volatile var token: String? = null
 
@@ -108,7 +111,7 @@ class PocketBase(
         configure: HttpRequestBuilder.() -> Unit = {},
     ): JsonElement {
         // Encoding a big payload (a workout with many sets) is kept off the calling (main) thread.
-        val encoded = body?.let { withContext(Dispatchers.Default) { VolumJson.encodeToString(JsonElement.serializer(), it) } }
+        val encoded = body?.let { withContext(defaultDispatcher) { VolumJson.encodeToString(JsonElement.serializer(), it) } }
         // The body is read inside the try too: a connection dropped after the headers is a network
         // failure like any other, not an exception that escapes to the caller's scope.
         val (status, text) = try {
@@ -134,7 +137,7 @@ class PocketBase(
         }
         // A page of records can be megabytes: parsed off the main thread, small replies inline.
         val json = if (text.length > INLINE_JSON_LIMIT) {
-            withContext(Dispatchers.Default) { runCatching { VolumJson.parseToJsonElement(text) }.getOrNull() }
+            withContext(defaultDispatcher) { runCatching { VolumJson.parseToJsonElement(text) }.getOrNull() }
         } else {
             runCatching { VolumJson.parseToJsonElement(text) }.getOrNull()
         }

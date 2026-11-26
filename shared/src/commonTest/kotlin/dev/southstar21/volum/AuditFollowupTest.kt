@@ -54,7 +54,7 @@ class AuditFollowupTest {
             CoroutineScope(SupervisorJob() + StandardTestDispatcher(TestCoroutineScheduler())),
         )
         val serverNow = 1_800_000_000_000L
-        val repo = Repository(store, "me") { serverNow }
+        val repo = Repository(store, "me", stampClock = { serverNow })
         val entry = WorkoutEntry(id = "e1", exerciseId = "x1", name = "Bench", sets = listOf(SetEntry(id = "s1", weight = 50.0, reps = 5)))
         val saved = repo.saveWorkout(routineName = "Push", entries = listOf(entry))
         assertEquals(isoOf(serverNow), saved.entries.single().sets.single().updatedAt)

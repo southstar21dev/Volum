@@ -19,6 +19,7 @@ import dev.southstar21.volum.util.newId
 import dev.southstar21.volum.util.nowMillis
 import dev.southstar21.volum.util.nowIso
 import dev.southstar21.volum.util.plural
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -33,6 +34,8 @@ class Repository(
     val owner: String,
     /** The time (epoch ms) set edits are stamped with: the server's clock as best known, see [PocketBase.serverNowMillis]. */
     private val stampClock: () -> Long = ::nowMillis,
+    /** Where workout transactions run off the calling thread; tests pass a test dispatcher. */
+    private val defaultDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
     private val _writes = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     val writes: SharedFlow<Unit> = _writes
@@ -176,7 +179,7 @@ class Repository(
     ): Workout {
         // Rebasing, stamping and encoding a big workout is CPU work: the whole transaction (taking its
         // lock included) runs off the calling thread. It is still one transaction, so edits stay serial.
-        val record = withContext(Dispatchers.Default) {
+        val record = withContext(defaultDispatcher) {
             store.transaction { writeWorkout(id, routineId, routineName, startedAt, finishedAt, status, entries, basis) }
         }
         announce()
@@ -226,7 +229,7 @@ class Repository(
      * captured by the screen would make them overwrite each other. Does nothing if the workout or set is gone.
      */
     suspend fun mutateSet(workoutId: String, entryId: String, setId: String, change: (SetEntry) -> SetEntry) {
-        val saved = withContext(Dispatchers.Default) { store.transaction {
+        val saved = withContext(defaultDispatcher) { store.transaction {
             val existing = workouts[workoutId] ?: return@transaction false
             val next = existing.entries.map { e ->
                 if (e.id == entryId) e.copy(sets = e.sets.map { if (it.id == setId) change(it) else it }) else e

@@ -12,6 +12,7 @@ import dev.southstar21.volum.util.nowMillis
 import dev.southstar21.volum.util.parseTime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
@@ -104,6 +105,8 @@ class LocalStore(
      * pull, a sync tick) is one write of each table instead of one per change. [flushNow] skips the wait.
      */
     private val writeDelayMs: Long = 0,
+    /** Where table files are read and written; tests pass a test dispatcher. */
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val mutex = Mutex()
 
@@ -146,7 +149,7 @@ class LocalStore(
      * A file that exists but can't be read (an I/O error, not bad content) fails the load and is
      * left untouched, so the next attempt can read it.
      */
-    suspend fun load() = withContext(Dispatchers.IO) {
+    suspend fun load() = withContext(ioDispatcher) {
         ensureDirectory(dir)
         // The five files are independent: read them side by side so a cold start costs the slowest one.
         // An unreadable file (see below) fails the whole load, cancelling the other reads.
@@ -367,7 +370,7 @@ class LocalStore(
             }
             if (done) return
             val failed = fileLock.withLock {
-                withContext(Dispatchers.IO) { writeTables(ex, ro, wo, ob, me) }
+                withContext(ioDispatcher) { writeTables(ex, ro, wo, ob, me) }
             }
             if (failed == 0) {
                 _writeError.value = null
@@ -412,7 +415,7 @@ class LocalStore(
             dirty = 0
             Tables(_exercises.value, _routines.value, _workouts.value, _outbox.value, _meta.value)
         }
-        val failed = fileLock.withLock { withContext(Dispatchers.IO) { writeTables(ex, ro, wo, ob, me) } }
+        val failed = fileLock.withLock { withContext(ioDispatcher) { writeTables(ex, ro, wo, ob, me) } }
         if (failed != 0) mutex.withLock { dirty = dirty or failed }
     }
 

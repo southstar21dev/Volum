@@ -208,14 +208,14 @@ class ContainerTest {
             if (failCleanup) throw IOException("No space left on device")
         }
 
-        val first = PartnerRepository(server.pb, dir, backgroundScope, onChange)
+        val first = PartnerRepository(server.pb, dir, backgroundScope, onPartnerChanged = onChange)
         first.load()
         first.refresh()
         assertEquals("Something went wrong", first.error.value)
         assertFalse(SystemFileSystem.exists(Path(dir, "partner.json")), "the snapshot isn't saved before the cleanup succeeds")
 
         failCleanup = false
-        val next = PartnerRepository(server.pb, dir, backgroundScope, onChange)
+        val next = PartnerRepository(server.pb, dir, backgroundScope, onPartnerChanged = onChange)
         next.load()
         next.refresh()
         assertNull(next.error.value)

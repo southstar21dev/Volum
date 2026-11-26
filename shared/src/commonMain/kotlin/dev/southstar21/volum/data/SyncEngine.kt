@@ -12,6 +12,7 @@ import dev.southstar21.volum.util.nowMillis
 import dev.southstar21.volum.util.parseTime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
@@ -83,6 +84,8 @@ class SyncEngine(
      * when it is refused). Used when a push is rejected: PocketBase answers a revoked token with 404/400.
      */
     private val authStillValid: suspend () -> Boolean = { true },
+    /** Where pulled records are decoded off the main thread; tests pass a test dispatcher. */
+    private val defaultDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val onAuthExpired: () -> Unit,
 ) {
     private val _status = MutableStateFlow(SyncStatus(lastSyncedAt = store.meta.value["lastSyncedAt"]))
@@ -366,7 +369,7 @@ class SyncEngine(
             val result = pb.getList(collection.wire, 1, PAGE_SIZE, filter, "updated,id")
             // Decoded off the main thread, then applied as a whole page in one transaction: one update
             // for the UI and one disk write, not one per record.
-            val decoded = withContext(Dispatchers.Default) { result.items.map { it to incomingOf(collection, it) } }
+            val decoded = withContext(defaultDispatcher) { result.items.map { it to incomingOf(collection, it) } }
             val incoming = decoded.mapNotNull { it.second }
             // A record that doesn't decode doesn't hold the marker back (every later sync would download
             // everything since it again); its id is kept to be fetched again on its own (see retryUndecodable).
@@ -416,7 +419,7 @@ class SyncEngine(
             store.transaction { putIdList(key, meta[key].toIdList().filter { it !in ids }) }
             return
         }
-        val decoded = withContext(Dispatchers.Default) { result.items.map { it to incomingOf(collection, it) } }
+        val decoded = withContext(defaultDispatcher) { result.items.map { it to incomingOf(collection, it) } }
         // Still undecodable and still on the server; the rest were deleted, hidden or now decode.
         val stillFailing = decoded.filter { it.second == null }.mapNotNull { it.first["id"]?.jsonPrimitive?.contentOrNull }.toSet()
         store.transaction {
