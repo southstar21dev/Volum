@@ -61,7 +61,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import dev.southstar21.volum.data.PbException
+import dev.southstar21.volum.data.actionErrorMessage
+import dev.southstar21.volum.data.authErrorMessage
 import dev.southstar21.volum.model.WeightUnit
 import dev.southstar21.volum.resources.Res
 import dev.southstar21.volum.resources.app_icon
@@ -157,10 +158,8 @@ fun AuthScreen() {
                 if (register) app.register(email, password) else app.login(email, password)
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: PbException) {
-                error = authErrorMessage(e, register)
             } catch (e: Exception) {
-                error = "Something went wrong. Try again."
+                error = authErrorMessage(e, register)
             } finally {
                 busy = false
             }
@@ -247,10 +246,8 @@ fun OnboardingScreen() {
                 app.updatePrefs { it.copy(unit = unit, onboardingDone = true) }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: PbException) {
-                error = if (e.status == 0) "You're offline. Connect to save your name." else e.fieldMessage ?: "Couldn't save your name. Try again."
             } catch (e: Exception) {
-                error = "Couldn't save your name. Try again."
+                error = actionErrorMessage(e, "You're offline. Connect to save your name.", "Couldn't save your name. Try again.")
             } finally {
                 busy = false
             }
@@ -354,15 +351,6 @@ fun OnboardingScreen() {
             }
         }
     }
-}
-
-/** A sign-in or sign-up failure in words: never the server's raw response text. */
-private fun authErrorMessage(e: PbException, register: Boolean): String = when {
-    e.status == 0 -> if (register) "You're offline. Connect to create your account." else "You're offline. Connect to sign in."
-    !register && e.status == 400 -> "Wrong email or password."
-    e.status == 429 -> "Too many attempts. Wait a minute and try again."
-    e.status >= 500 -> "The server isn't responding. Try again soon."
-    else -> e.fieldMessage ?: if (register) "Couldn't create your account. Check your email and try again." else "Couldn't sign in. Try again."
 }
 
 /** The onboarding progress: one capsule per step, filled up to the current one, and "n of m". */

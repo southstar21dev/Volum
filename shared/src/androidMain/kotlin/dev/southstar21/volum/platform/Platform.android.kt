@@ -26,6 +26,8 @@ object AndroidPlatform {
 
 actual fun appDataDirectory(): String = AndroidPlatform.context.filesDir.absolutePath
 
+actual fun cacheDirectory(): String = AndroidPlatform.context.cacheDir.absolutePath
+
 actual fun createHttpClient(): HttpClient = HttpClient(OkHttp) {
     installTimeouts()
     expectSuccess = false

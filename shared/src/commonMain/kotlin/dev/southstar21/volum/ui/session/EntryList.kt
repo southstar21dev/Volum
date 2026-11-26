@@ -47,6 +47,7 @@ import dev.southstar21.volum.model.SetTag
 import dev.southstar21.volum.model.WeightUnit
 import dev.southstar21.volum.model.WorkoutEntry
 import dev.southstar21.volum.ui.components.CircleButton
+import dev.southstar21.volum.ui.components.SmallCircleButton
 import dev.southstar21.volum.ui.components.Divider
 import dev.southstar21.volum.ui.components.GlassCard
 import dev.southstar21.volum.ui.components.Mute
@@ -90,19 +91,6 @@ fun toggleHaptic(entries: List<WorkoutEntry>, entry: WorkoutEntry, set: SetEntry
 /** The weight shown in [preferred] units (converted if logged in the other). */
 fun SetEntry.weightIn(preferred: WeightUnit): Double = convert(weight, unit, preferred)
 
-/** A 38 dp glass circle in a 48 dp touch target: small on the card, still easy to hit. */
-@Composable
-private fun CardCircleButton(icon: ImageVector, contentDescription: String, onClick: () -> Unit) {
-    Box(
-        Modifier.size(48.dp).tappable(onClick = onClick).semantics { this.contentDescription = contentDescription },
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(Modifier.size(38.dp).liquidGlass(CircleShape), contentAlignment = Alignment.Center) {
-            Icon(icon, Volum.colors.ink, size = 18.dp)
-        }
-    }
-}
-
 /** One nudge: 2.5 kg / 5 lb, or 5 s for a hold. */
 fun stepWeight(preferred: WeightUnit) = if (preferred == WeightUnit.Kg) 2.5 else 5.0
 
@@ -130,6 +118,8 @@ fun reshapedSets(entry: WorkoutEntry, timed: Boolean): List<SetEntry> =
 /** Callbacks the list raises; the owner's session and a partner's session handle them differently. */
 data class EntryActions(
     val onSet: (entry: WorkoutEntry, set: SetEntry) -> Unit,
+    /** A nudge, as a change to the set's current value rather than the set the card was drawn with: quick taps stack. */
+    val onNudge: (entry: WorkoutEntry, setId: String, change: (SetEntry) -> SetEntry) -> Unit,
     val onToggleDone: (entry: WorkoutEntry, set: SetEntry) -> Unit,
     val onEditSet: (entry: WorkoutEntry, set: SetEntry) -> Unit,
     val onAddSet: (entry: WorkoutEntry) -> Unit,
@@ -179,9 +169,9 @@ fun ActiveEntryCard(
                 // The routine's note for this exercise: one quiet line, the whole note once opened.
                 if (!entry.isSkipped) entry.note?.trim()?.takeIf { it.isNotEmpty() }?.let { Mute(it, size = T.Small, maxLines = if (expanded) 3 else 1) }
             }
-            CardCircleButton(Icons.More, "More options for ${entry.name}") { actions.onMenu(entry) }
+            SmallCircleButton(Icons.More, "More options for ${entry.name}", iconSize = 18.dp) { actions.onMenu(entry) }
             AnimatedVisibility(!expanded, enter = fadeIn() + androidx.compose.animation.expandHorizontally(), exit = fadeOut() + androidx.compose.animation.shrinkHorizontally()) {
-                CardCircleButton(Icons.ChevronDown, "Expand ${entry.name}") { actions.onExpand(entry) }
+                SmallCircleButton(Icons.ChevronDown, "Expand ${entry.name}", iconSize = 18.dp) { actions.onExpand(entry) }
             }
         }
         AnimatedVisibility(
@@ -216,7 +206,7 @@ private fun SetRow(index: Int, set: SetEntry, current: Boolean, timed: Boolean, 
     val weight = set.weightIn(preferred)
     val running = if (timed) Stopwatches.startedAt(set.id) else null
     // One frame clock per running hold, shared by the seconds slot and the timer below.
-    val elapsed = running?.let { rememberElapsed(it) }
+    val elapsed = running?.let { rememberElapsed(it, frameUntilMs = (set.seconds ?: 0) * 1000L) }
     // Becoming the current set eases in (its ring, glow and the nudges below) rather than snapping, as
     // does the step back of the sets around it.
     val cur by animateFloatAsState(if (current) 1f else 0f, Springs.settle(), label = "current")
@@ -290,20 +280,20 @@ private fun SetRow(index: Int, set: SetEntry, current: Boolean, timed: Boolean, 
                         val unit = nudgeUnit(set, preferred, actions.keepSetUnits)
                         val step = stepWeight(unit)
                         CircleButton(Icons.Minus, "Weight down ${formatWeightValue(step)} ${unit.label}", repeatable = true) {
-                            haptic(Haptic.Tap); actions.onSet(entry, nudgedSet(set, preferred, actions.keepSetUnits, up = false))
+                            haptic(Haptic.Tap); actions.onNudge(entry, set.id) { nudgedSet(it, preferred, actions.keepSetUnits, up = false) }
                         }
                         CircleButton(Icons.Plus, "Weight up ${formatWeightValue(step)} ${unit.label}", repeatable = true) {
-                            haptic(Haptic.Tap); actions.onSet(entry, nudgedSet(set, preferred, actions.keepSetUnits, up = true))
+                            haptic(Haptic.Tap); actions.onNudge(entry, set.id) { nudgedSet(it, preferred, actions.keepSetUnits, up = true) }
                         }
                     }
                 }
                 Row(Modifier.width(84.dp + 44.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (timed) {
-                        CircleButton(Icons.Minus, "5 seconds less", repeatable = true) { haptic(Haptic.Tap); actions.onSet(entry, set.copy(seconds = ((set.seconds ?: 0) - 5).coerceAtLeast(0))) }
-                        CircleButton(Icons.Plus, "5 seconds more", repeatable = true) { haptic(Haptic.Tap); actions.onSet(entry, set.copy(seconds = (set.seconds ?: 0) + 5)) }
+                        CircleButton(Icons.Minus, "5 seconds less", repeatable = true) { haptic(Haptic.Tap); actions.onNudge(entry, set.id) { it.copy(seconds = ((it.seconds ?: 0) - 5).coerceAtLeast(0)) } }
+                        CircleButton(Icons.Plus, "5 seconds more", repeatable = true) { haptic(Haptic.Tap); actions.onNudge(entry, set.id) { it.copy(seconds = (it.seconds ?: 0) + 5) } }
                     } else {
-                        CircleButton(Icons.Minus, "One rep fewer", repeatable = true) { haptic(Haptic.Tap); actions.onSet(entry, set.copy(reps = (set.reps - 1).coerceAtLeast(0))) }
-                        CircleButton(Icons.Plus, "One more rep", repeatable = true) { haptic(Haptic.Tap); actions.onSet(entry, set.copy(reps = set.reps + 1)) }
+                        CircleButton(Icons.Minus, "One rep fewer", repeatable = true) { haptic(Haptic.Tap); actions.onNudge(entry, set.id) { it.copy(reps = (it.reps - 1).coerceAtLeast(0)) } }
+                        CircleButton(Icons.Plus, "One more rep", repeatable = true) { haptic(Haptic.Tap); actions.onNudge(entry, set.id) { it.copy(reps = it.reps + 1) } }
                     }
                 }
             }

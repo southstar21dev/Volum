@@ -6,13 +6,18 @@ import dev.southstar21.volum.model.OutboxItem
 import dev.southstar21.volum.model.Routine
 import dev.southstar21.volum.model.VolumJson
 import dev.southstar21.volum.model.Workout
+import dev.southstar21.volum.platform.logWarn
 import dev.southstar21.volum.util.nowIso
 import dev.southstar21.volum.util.nowMillis
 import dev.southstar21.volum.util.parseTime
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,7 +65,8 @@ object JsonFiles {
     fun <T> read(path: Path, serializer: KSerializer<T>): T? = try {
         if (!SystemFileSystem.exists(path)) null
         else SystemFileSystem.source(path).buffered().use { VolumJson.decodeFromString(serializer, it.readString()) }
-    } catch (_: Throwable) {
+    } catch (e: Exception) {
+        logWarn("JsonFiles", "Couldn't read $path", e)
         null
     }
 
@@ -69,6 +75,15 @@ object JsonFiles {
         val tmp = Path("$path.tmp")
         SystemFileSystem.sink(tmp).buffered().use { it.writeString(VolumJson.encodeToString(serializer, value)) }
         SystemFileSystem.atomicMove(tmp, path)
+    }
+
+    /** Removes [path] and everything under it; a missing path is fine. */
+    fun deleteTree(path: Path) {
+        runCatching {
+            if (!SystemFileSystem.exists(path)) return
+            if (SystemFileSystem.metadataOrNull(path)?.isDirectory == true) SystemFileSystem.list(path).forEach(::deleteTree)
+            SystemFileSystem.delete(path, mustExist = false)
+        }
     }
 
     fun delete(path: Path) {
@@ -81,7 +96,18 @@ object JsonFiles {
  * immediately on every change and synced to PocketBase in the background (the web app's Dexie DB).
  * [owner] is the signed-in user: only their records are ever queued for the server.
  */
-class LocalStore(private val dir: Path, private val scope: CoroutineScope, private val owner: String? = null) {
+class LocalStore(
+    private val dir: Path,
+    private val scope: CoroutineScope,
+    private val owner: String? = null,
+    /**
+     * How long the writer waits after a change before writing, so a burst of edits (set nudges, a sync
+     * pull, a sync tick) is one write of each table instead of one per change. [flushNow] skips the wait.
+     */
+    private val writeDelayMs: Long = 0,
+    /** Where table files are read and written; tests pass a test dispatcher. */
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+) {
     private val mutex = Mutex()
 
     /** Held while files are written, so the writer and a final [flushNow] never write the same file at once. */
@@ -123,14 +149,21 @@ class LocalStore(private val dir: Path, private val scope: CoroutineScope, priva
      * A file that exists but can't be read (an I/O error, not bad content) fails the load and is
      * left untouched, so the next attempt can read it.
      */
-    suspend fun load() = withContext(Dispatchers.IO) {
+    suspend fun load() = withContext(ioDispatcher) {
         ensureDirectory(dir)
-        val exercises = readTable("exercises", Exercise.serializer())
-        val routines = readTable("routines", Routine.serializer())
-        val workouts = readTable("workouts", Workout.serializer())
-        val meta = readTable("meta", String.serializer())
-        val outbox = readFile<List<OutboxItem>>("outbox", emptyList(), { VolumJson.decodeFromString(outboxSer, it) }) { json ->
-            (json as JsonArray).mapNotNull { item -> runCatching { VolumJson.decodeFromJsonElement(OutboxItem.serializer(), item) }.getOrNull() }
+        // The five files are independent: read them side by side so a cold start costs the slowest one.
+        // An unreadable file (see below) fails the whole load, cancelling the other reads.
+        val (exercises, routines, workouts, meta, outbox) = coroutineScope {
+            val ex = async { readTable("exercises", Exercise.serializer()) }
+            val ro = async { readTable("routines", Routine.serializer()) }
+            val wo = async { readTable("workouts", Workout.serializer()) }
+            val me = async { readTable("meta", String.serializer()) }
+            val ob = async {
+                readFile<List<OutboxItem>>("outbox", emptyList(), { VolumJson.decodeFromString(outboxSer, it) }) { json ->
+                    (json as JsonArray).mapNotNull { item -> runCatching { VolumJson.decodeFromJsonElement(OutboxItem.serializer(), item) }.getOrNull() }
+                }
+            }
+            LoadedTables(ex.await(), ro.await(), wo.await(), me.await(), ob.await())
         }
 
         var rewrite = 0
@@ -167,8 +200,9 @@ class LocalStore(private val dir: Path, private val scope: CoroutineScope, priva
             val original = loaded.damaged ?: continue
             try {
                 writeText(Path(dir, "$name.json.corrupt-$stamp"), original)
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 // Keeping the damaged copy is a courtesy; the repair goes ahead without it.
+                logWarn("LocalStore", "Couldn't keep a copy of the damaged $name.json", e)
             }
         }
         var failed = 0
@@ -190,6 +224,14 @@ class LocalStore(private val dir: Path, private val scope: CoroutineScope, priva
         }
         _loaded.value = true
     }
+
+    private data class LoadedTables(
+        val exercises: Loaded<Map<String, Exercise>>,
+        val routines: Loaded<Map<String, Routine>>,
+        val workouts: Loaded<Map<String, Workout>>,
+        val meta: Loaded<Map<String, String>>,
+        val outbox: Loaded<List<OutboxItem>>,
+    )
 
     /** A file's contents; [damaged] holds the original text when it didn't decode whole, [missing] when there was no file. */
     private class Loaded<T>(val value: T, val damaged: String? = null, val missing: Boolean = false)
@@ -217,6 +259,7 @@ class LocalStore(private val dir: Path, private val scope: CoroutineScope, priva
                 if (!SystemFileSystem.exists(path)) return Loaded(empty, missing = true)
                 read = SystemFileSystem.source(path).buffered().use { it.readString() }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 if (++attempt >= READ_ATTEMPTS) throw IOException("Couldn't read $name.json", e)
                 delay(READ_RETRY_MS)
             }
@@ -224,7 +267,8 @@ class LocalStore(private val dir: Path, private val scope: CoroutineScope, priva
         val text: String = read
         try {
             return Loaded(decode(text))
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            logWarn("LocalStore", "$name.json doesn't decode whole; salvaging what it can", e)
         }
         val salvaged = runCatching { salvage(VolumJson.parseToJsonElement(text)) }.getOrNull() ?: empty
         return Loaded(salvaged, damaged = text)
@@ -306,6 +350,8 @@ class LocalStore(private val dir: Path, private val scope: CoroutineScope, priva
     private suspend fun flush() {
         var retryMs = WRITE_RETRY_MS
         while (true) {
+            // Let a burst of changes settle first; each table is then written once for all of them.
+            if (writeDelayMs > 0) delay(writeDelayMs)
             var ex: Map<String, Exercise>? = null
             var ro: Map<String, Routine>? = null
             var wo: Map<String, Workout>? = null
@@ -324,7 +370,7 @@ class LocalStore(private val dir: Path, private val scope: CoroutineScope, priva
             }
             if (done) return
             val failed = fileLock.withLock {
-                withContext(Dispatchers.IO) { writeTables(ex, ro, wo, ob, me) }
+                withContext(ioDispatcher) { writeTables(ex, ro, wo, ob, me) }
             }
             if (failed == 0) {
                 _writeError.value = null
@@ -369,7 +415,7 @@ class LocalStore(private val dir: Path, private val scope: CoroutineScope, priva
             dirty = 0
             Tables(_exercises.value, _routines.value, _workouts.value, _outbox.value, _meta.value)
         }
-        val failed = fileLock.withLock { withContext(Dispatchers.IO) { writeTables(ex, ro, wo, ob, me) } }
+        val failed = fileLock.withLock { withContext(ioDispatcher) { writeTables(ex, ro, wo, ob, me) } }
         if (failed != 0) mutex.withLock { dirty = dirty or failed }
     }
 
@@ -384,7 +430,10 @@ class LocalStore(private val dir: Path, private val scope: CoroutineScope, priva
     private fun <T> tryWrite(name: String, serializer: KSerializer<T>, value: T): Boolean = try {
         JsonFiles.write(file(name), serializer, value)
         true
-    } catch (_: Exception) {
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        logWarn("LocalStore", "Couldn't write $name.json", e)
         false
     }
 
@@ -426,15 +475,17 @@ class LocalStore(private val dir: Path, private val scope: CoroutineScope, priva
          * Queues [item] in place of any pending (not rejected) item for the same record: payloads are
          * whole records, so only the newest needs pushing. Its id is above every current one, so an
          * item already being pushed can't share it. It keeps the replaced item's createdAt: the record
-         * has been waiting since its first unsent change, however often it has changed since.
+         * has been waiting since its first unsent change, however often it has changed since, and it
+         * stays [OutboxItem.isNew] if the replaced one was: the record still hasn't been created.
          */
         fun replaceOutbox(collection: String, recordId: String, item: (Long) -> OutboxItem) {
             val list = obW()
             val next = (list.maxOfOrNull { it.id } ?: 0L) + 1
             val pending: (OutboxItem) -> Boolean = { !it.failed && it.collection == collection && it.recordId == recordId }
             val since = list.firstOrNull(pending)?.createdAt
+            val wasNew = list.any { pending(it) && it.isNew }
             list.removeAll(pending)
-            val made = item(next)
+            val made = item(next).let { if (wasNew && !it.isNew) it.copy(isNew = true) else it }
             list.add(if (since != null) made.copy(createdAt = since) else made)
         }
 

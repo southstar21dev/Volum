@@ -1,0 +1,7 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>MaxLineLength:NativeSegmented.ios.kt:addAction(UIAction.actionWithHandler { _ -&gt; pick(selectedSegmentIndex.toInt()) }, forControlEvents = UIControlEventValueChanged)</ID>
+  </CurrentIssues>
+</SmellBaseline>

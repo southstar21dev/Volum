@@ -12,9 +12,13 @@ import dev.southstar21.volum.util.nowMillis
 import dev.southstar21.volum.util.parseTime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +28,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.io.IOException
+import kotlin.concurrent.Volatile
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -74,6 +79,13 @@ class SyncEngine(
     private val hasPartner: () -> Boolean = { false },
     /** Runs before each push; the app makes sure the sign-in token is fresh there. */
     private val beforePush: suspend () -> Unit = {},
+    /**
+     * Asks whether the server still accepts the sign-in (the app refreshes the token and says false
+     * when it is refused). Used when a push is rejected: PocketBase answers a revoked token with 404/400.
+     */
+    private val authStillValid: suspend () -> Boolean = { true },
+    /** Where pulled records are decoded off the main thread; tests pass a test dispatcher. */
+    private val defaultDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val onAuthExpired: () -> Unit,
 ) {
     private val _status = MutableStateFlow(SyncStatus(lastSyncedAt = store.meta.value["lastSyncedAt"]))
@@ -84,10 +96,12 @@ class SyncEngine(
     val lastPulledAt: StateFlow<Long?> = _lastPulledAt.asStateFlow()
 
     private val running = Mutex()
-    private var rerun = false
-    private var paused = false
+    @Volatile private var rerun = false
+    @Volatile private var paused = false
     private var backoffMs = 2_000L
     private val jobs = mutableListOf<Job>()
+    // One-off launches (scheduled syncs, marker resets): cancelled by stop() like the loops in [jobs].
+    private val oneOffs = mutableSetOf<Job>()
     private var backoffJob: Job? = null
 
     // Bumped (inside a store transaction) whenever pull markers are forgotten, so a pull that was
@@ -121,20 +135,31 @@ class SyncEngine(
     fun stop() {
         jobs.forEach { it.cancel() }
         jobs.clear()
+        oneOffs.toList().forEach { it.cancel() }
+        oneOffs.clear()
         backoffJob?.cancel()
     }
 
-    fun scheduleSync() { scope.launch { delay(DEBOUNCE_MS); syncNow() } }
+    private fun launchTracked(block: suspend () -> Unit) {
+        val job = scope.launch { block() }
+        oneOffs += job
+        job.invokeOnCompletion { oneOffs -= job }
+    }
+
+    fun scheduleSync() { launchTracked { delay(DEBOUNCE_MS); syncNow() } }
 
     /**
      * Forgets where the last pull of [collections] (wire names, e.g. "routines") stopped and syncs,
      * so records that became visible without changing, like a new partner's routines, are fetched.
      */
     fun forgetPullMarkers(collections: List<String>) {
-        scope.launch {
-            store.transaction {
-                pullResets++
-                for (collection in collections) deleteMeta("lastPull.$collection")
+        launchTracked {
+            // The reset itself must not be lost to a stop(); only the sync after it can be.
+            withContext(NonCancellable) {
+                store.transaction {
+                    pullResets++
+                    for (collection in collections) deleteMeta("lastPull.$collection")
+                }
             }
             syncNow()
         }
@@ -151,15 +176,32 @@ class SyncEngine(
     }
 
     suspend fun syncNow() {
-        if (paused) return
-        if (!running.tryLock()) { rerun = true; return }
-        try {
+        // The request is recorded before taking the lock: a caller that finds a sync running leaves
+        // it for that run to pick up once it has unlocked, so no request falls between the run's last
+        // look at [rerun] and its unlock.
+        rerun = true
+        while (rerun && !paused) {
+            if (!running.tryLock()) return
+            rerun = false
+            try {
+                runSync()
+            } finally {
+                running.unlock()
+            }
+        }
+    }
+
+    private suspend fun runSync() {
+        run {
             report(SyncState.Pending)
             try {
                 beforePush()
-                if (pullBeforePush()) pullCollection(Collection.Workouts)
-                val failed = pushOutbox()
-                pullAll()
+                val pulledWorkouts = pullBeforePush()
+                if (pulledWorkouts) pullCollection(Collection.Workouts)
+                val pushed = pushOutbox()
+                val failed = pushed.failed
+                // The workouts pull before the push already has everything, unless the push changed them.
+                pullAll(skipWorkouts = pulledWorkouts && pushed.sent == 0)
                 _lastPulledAt.value = nowMillis()
                 if (failed > 0) {
                     val message = store.outbox.value.firstOrNull { it.failed }?.lastError ?: "Some changes were rejected"
@@ -193,12 +235,6 @@ class SyncEngine(
                 report(SyncState.Error, SyncProblem.Failed, e.message ?: "Sync failed")
                 scheduleBackoff()
             }
-        } finally {
-            running.unlock()
-            if (rerun) {
-                rerun = false
-                scope.launch { syncNow() }
-            }
         }
     }
 
@@ -221,29 +257,66 @@ class SyncEngine(
         return store.outbox.value.any { !it.failed && it.collection == Collection.Workouts.wire && pulledKey(it.recordId) in meta }
     }
 
-    /** Returns how many items were rejected (4xx). Network errors, timeouts, rate limits and 401 propagate. */
-    private suspend fun pushOutbox(): Int {
+    private class PushResult(val sent: Int, val failed: Int)
+
+    /** Counts what was sent and what was rejected (4xx). Network errors, timeouts, rate limits and 401 propagate. */
+    private suspend fun pushOutbox(): PushResult {
         var failed = 0
+        var sent = 0
+        var authProbed = false
         for (item in store.outbox.value.sortedBy { it.id }) {
             if (item.failed) { failed++; continue }
             try {
-                try {
-                    pb.update(item.collection, item.recordId, withSyncBase(item))
-                } catch (e: PbException) {
-                    if (e.status != 404) throw e
-                    pb.create(item.collection, JsonObject(mapOf("id" to JsonPrimitive(item.recordId)) + item.payload))
-                }
+                push(item)
                 store.transaction { updateOutbox { list -> list.filterNot { it.id == item.id } } }
+                sent++
             } catch (e: PbException) {
                 // An out-of-date build is refused whatever it sends: the change itself isn't at fault.
                 if (e.status == 401 || e.status == PocketBase.UPDATE_REQUIRED || isTransient(e.status)) throw e
+                // A revoked or expired token is treated by PocketBase as no sign-in at all, so a push
+                // with one is refused like an invalid change (404, then 400) rather than with a 401.
+                // Once per run, ask whether the sign-in still holds before blaming the change.
+                if (!authProbed) {
+                    authProbed = true
+                    if (!authStillValid()) throw PbException(401, "Session expired")
+                }
                 store.transaction {
                     updateOutbox { list -> list.map { if (it.id == item.id) it.copy(failed = true, attempts = it.attempts + 1, lastError = e.message) else it } }
                 }
                 failed++
             }
         }
-        return failed
+        return PushResult(sent, failed)
+    }
+
+    /**
+     * Sends one queued change. A record created here is POSTed straight away; if the server says it is
+     * there already (an earlier push got through but its answer was lost), it is PATCHed instead. Any
+     * other record is PATCHed, and POSTed if the server doesn't have it (404).
+     */
+    private suspend fun push(item: OutboxItem) {
+        val created = JsonObject(mapOf("id" to JsonPrimitive(item.recordId)) + item.payload)
+        if (item.isNew) {
+            try {
+                pb.create(item.collection, created)
+            } catch (e: PbException) {
+                if (e.status != 400) throw e
+                try {
+                    pb.update(item.collection, item.recordId, withSyncBase(item))
+                } catch (u: PbException) {
+                    // Not there after all: the POST was refused for a reason of its own.
+                    if (u.status == 404) throw e
+                    throw u
+                }
+            }
+            return
+        }
+        try {
+            pb.update(item.collection, item.recordId, withSyncBase(item))
+        } catch (e: PbException) {
+            if (e.status != 404) throw e
+            pb.create(item.collection, created)
+        }
     }
 
     /**
@@ -260,8 +333,12 @@ class SyncEngine(
     /** Worth retrying as is: no connection, a timeout, a rate limit or a server error. */
     private fun isTransient(status: Int) = status == 0 || status == 408 || status == 429 || status >= 500
 
-    private suspend fun pullAll() {
-        for (collection in Collection.entries) pullCollection(collection)
+    /** The collections are independent, so they are pulled side by side; any failure fails the run. */
+    private suspend fun pullAll(skipWorkouts: Boolean = false) = coroutineScope {
+        Collection.entries
+            .filter { !(skipWorkouts && it == Collection.Workouts) }
+            .map { async { pullCollection(it) } }
+            .forEach { it.await() }
     }
 
     /**
@@ -292,7 +369,7 @@ class SyncEngine(
             val result = pb.getList(collection.wire, 1, PAGE_SIZE, filter, "updated,id")
             // Decoded off the main thread, then applied as a whole page in one transaction: one update
             // for the UI and one disk write, not one per record.
-            val decoded = withContext(Dispatchers.Default) { result.items.map { it to incomingOf(collection, it) } }
+            val decoded = withContext(defaultDispatcher) { result.items.map { it to incomingOf(collection, it) } }
             val incoming = decoded.mapNotNull { it.second }
             // A record that doesn't decode doesn't hold the marker back (every later sync would download
             // everything since it again); its id is kept to be fetched again on its own (see retryUndecodable).
@@ -337,12 +414,12 @@ class SyncEngine(
         val result = try {
             pb.getList(collection.wire, 1, ids.size, filter, "updated,id")
         } catch (e: PbException) {
-            if (e.status == 401 || isTransient(e.status)) throw e
+            if (e.status == 401 || e.status == PocketBase.UPDATE_REQUIRED || isTransient(e.status)) throw e
             // Refused outright: give up on these rather than fail every sync over them.
             store.transaction { putIdList(key, meta[key].toIdList().filter { it !in ids }) }
             return
         }
-        val decoded = withContext(Dispatchers.Default) { result.items.map { it to incomingOf(collection, it) } }
+        val decoded = withContext(defaultDispatcher) { result.items.map { it to incomingOf(collection, it) } }
         // Still undecodable and still on the server; the rest were deleted, hidden or now decode.
         val stillFailing = decoded.filter { it.second == null }.mapNotNull { it.first["id"]?.jsonPrimitive?.contentOrNull }.toSet()
         store.transaction {
@@ -378,14 +455,16 @@ class SyncEngine(
     private fun LocalStore.Tx.applyIncoming(item: Incoming) {
         val id = item.id
         val collection = item.collection
-        val pending = outbox.count { it.recordId == id }
+        // Changes still waiting to go up. A rejected (failed) item is not waiting: it must not hold
+        // the server's copy back, and its payload is left as it was for retryNow.
+        val pending = outbox.count { it.collection == collection.wire && it.recordId == id && !it.failed }
         if (collection == Collection.Workouts) {
             val incoming = item.record as Workout
             val mine = workouts[id]
             if (incoming.deleted) {
                 // Deleted on another device. That wins over edits still queued here, whose whole-record
                 // push would otherwise bring the workout back.
-                if (pending > 0) updateOutbox { list -> list.filterNot { it.recordId == id } }
+                if (pending > 0) updateOutbox { list -> list.filterNot { it.collection == collection.wire && it.recordId == id && !it.failed } }
                 putWorkout(incoming)
                 recordPulled(incoming)
                 return
@@ -396,16 +475,25 @@ class SyncEngine(
                 // last edit (which may be later than the partner's change).
                 val removed = (mine.removedEntryIds.orEmpty() + incoming.removedEntryIds.orEmpty()).distinct()
                 val basedOn = meta[pulledKey(id)] ?: mine.updated ?: mine.updatedAt
+                // A workout finished on either device stays finished: our queued copy may still say
+                // active, and pushing that would reopen it on the server.
+                val completed = incoming.status == WorkoutStatus.Completed || mine.status == WorkoutStatus.Completed
                 val merged = mine.copy(
                     entries = mergeWorkoutEntries(incoming.entries, mine.entries, basedOn, removed),
                     removedEntryIds = removed.ifEmpty { null },
+                    status = if (completed) WorkoutStatus.Completed else mine.status,
+                    finishedAt = when {
+                        mine.status == WorkoutStatus.Completed -> mine.finishedAt
+                        completed -> incoming.finishedAt ?: mine.finishedAt
+                        else -> mine.finishedAt
+                    },
                 )
                 putWorkout(merged)
                 // The queued copy is what gets pushed, with this pull as its base (see withSyncBase):
                 // it must carry what was just merged in, or the server would take the partner's
                 // sets as removed.
                 val payload = VolumJson.encodeToJsonElement(Workout.serializer(), merged.copy(updated = null)).jsonObject
-                updateOutbox { list -> list.map { if (it.collection == collection.wire && it.recordId == id) it.copy(payload = payload) else it } }
+                updateOutbox { list -> list.map { if (it.collection == collection.wire && it.recordId == id && !it.failed) it.copy(payload = payload) else it } }
                 recordPulled(incoming)
                 return
             }
@@ -416,7 +504,7 @@ class SyncEngine(
             Collection.Workouts -> workouts[id]?.updatedAt
         }
         if (pending > 0 && localUpdatedAt != null && parseTime(localUpdatedAt) > parseTime(item.updatedAt)) return
-        if (pending > 0) updateOutbox { list -> list.filterNot { it.recordId == id } }
+        if (pending > 0) updateOutbox { list -> list.filterNot { it.collection == collection.wire && it.recordId == id && !it.failed } }
         when (collection) {
             Collection.Exercises -> putExercise(item.record as Exercise)
             Collection.Routines -> putRoutine(item.record as Routine)

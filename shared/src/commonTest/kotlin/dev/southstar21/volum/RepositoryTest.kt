@@ -91,6 +91,38 @@ class RepositoryTest {
         assertEquals(setOf("s1", "s2"), emptied.entries.single().removedSetIds?.toSet())
     }
 
+    @Test fun quickNudgesOfOneSetEachBuildOnTheOneBefore() = runTest {
+        val store = newStore()
+        val repo = Repository(store, OWNER)
+        val started = repo.saveWorkout(routineName = "Push", entries = listOf(entry("a", set("s1"), set("s2"))))
+        val writes = countWrites(repo)
+
+        // Both taps were drawn from the same weight; each still lands on top of the last.
+        repeat(2) { repo.mutateSet(started.id, "a", "s1") { it.copy(weight = it.weight + 2.5) } }
+        repo.mutateSet(started.id, "a", "s1") { it.copy(reps = it.reps + 1) }
+
+        val sets = store.workouts.value.getValue(started.id).entries.single().sets
+        assertEquals(55.0, sets[0].weight)
+        assertEquals(6, sets[0].reps)
+        assertEquals(50.0, sets[1].weight)
+        assertEquals(3, writes())
+    }
+
+    @Test fun nudgingASetThatIsGoneOrUnchangedWritesNothing() = runTest {
+        val store = newStore()
+        val repo = Repository(store, OWNER)
+        val started = repo.saveWorkout(routineName = "Push", entries = listOf(entry("a", set("s1"))))
+        val queued = store.outbox.value.size
+        val writes = countWrites(repo)
+
+        repo.mutateSet(started.id, "a", "missing") { it.copy(reps = 99) }
+        repo.mutateSet("nope", "a", "s1") { it.copy(reps = 99) }
+        repo.mutateSet(started.id, "a", "s1") { it }
+
+        assertEquals(0, writes())
+        assertEquals(queued, store.outbox.value.size)
+    }
+
     @Test fun removedIdsThatComeBackAreNoLongerRemembered() = runTest {
         val store = newStore()
         val repo = Repository(store, OWNER)
@@ -246,8 +278,8 @@ class RepositoryTest {
         val renamed = repo.renameExercise("e1", "Bench press")
         runCurrent()
 
-        assertEquals("Bench press", renamed.name)
-        assertEquals(OWNER, renamed.owner)
+        assertEquals("Bench press", renamed?.name)
+        assertEquals(OWNER, renamed?.owner)
         assertEquals(renamed, store.exercises.value["e1"])
         assertEquals(row, store.exercises.value["e2"])
         assertEquals(
@@ -302,11 +334,11 @@ class RepositoryTest {
         assertEquals(0, writes())
     }
 
-    @Test fun renameExerciseOfAnUnknownIdFailsWithoutWriting() = runTest {
+    @Test fun renameExerciseOfAnUnknownIdReturnsNullWithoutWriting() = runTest {
         val store = newStore()
         val repo = Repository(store, OWNER)
 
-        assertFailsWith<IllegalStateException> { repo.renameExercise("missing", "Anything") }
+        assertNull(repo.renameExercise("missing", "Anything"))
         assertTrue(store.exercises.value.isEmpty())
         assertTrue(store.outbox.value.isEmpty())
     }
@@ -459,7 +491,7 @@ class RepositoryTest {
         assertEquals(MAX_ROUTINE_NAME, routine.name.length)
         assertEquals(MAX_ROUTINE_NAME, repo.saveWorkout(routineName = long, entries = listOf(entry("a"))).routineName.length)
         val lift = repo.saveExercise(name = "Bench")
-        assertEquals(MAX_EXERCISE_NAME, repo.renameExercise(lift.id, long).name.length)
+        assertEquals(MAX_EXERCISE_NAME, repo.renameExercise(lift.id, long)?.name?.length)
         assertEquals("Push A", repo.saveRoutine(name = "  Push A ", items = listOf(item("i2", "e1", "Bench"))).name)
     }
 

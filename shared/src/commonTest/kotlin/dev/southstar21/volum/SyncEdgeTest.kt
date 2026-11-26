@@ -310,6 +310,7 @@ class SyncEdgeTest {
         release.complete(Unit)
 
         rig.server.log.first { log -> log.count { it.isList("routines") } == 4 && log.count { it.isList("workouts") } == 2 }
+        rig.store.meta.first { it["lastPull.routines"] == stamp(BASE_MS + 600_000) }
         val pulls = rig.server.lists("routines")
         assertTrue(pulls[0].filterHas(marker))
         assertTrue(pulls[2].filterHas(EDGE_ZERO), "the rerun pulls in full; the interrupted pull didn't write its marker back")

@@ -123,6 +123,11 @@ internal fun editableWeight(weight: Double): String {
 /**
  * Lets a sheet act once per opening. A sheet stays on screen, and tappable, while it slides away, so a
  * quick second tap would otherwise add, save or delete a second time.
+ *
+ * Deliberately not merged with the components package's per-opening guard behind sheetAction: that
+ * one is keyed to a BottomSheet's own open flag and is inert outside a sheet, while these sheets are
+ * driven by a nullable target (see rememberLast) and re-arm when it flips, so the two reset on
+ * different signals and merging them would change when a tap is let through.
  */
 private class Once {
     var used = false
@@ -258,6 +263,11 @@ fun AddExerciseSheet(open: Boolean, exercises: List<Exercise>, recent: List<Exer
     var query by remember { mutableStateOf("") }
     LaunchedEffect(open) { if (open) query = "" }
     val once = rememberOnce(open)
+    // One scan per keystroke or library change, shared by the count, the list and the exact-match check.
+    val matches = remember(exercises, query) {
+        val q = query.trim()
+        exercises.filter { q.isEmpty() || it.name.contains(q, ignoreCase = true) }.sortedBy { it.name.lowercase() }
+    }
     fun pick(ex: Exercise) = once.act { onPick(ex); onDismiss() }
     fun create(name: String) = once.act { onCreate(name); onDismiss() }
     BottomSheet(open = open, onDismiss = onDismiss, fill = true, title = "Add exercise") {
@@ -270,10 +280,9 @@ fun AddExerciseSheet(open: Boolean, exercises: List<Exercise>, recent: List<Exer
             Spacer(Modifier.width(10.dp))
             val q0 = query.trim()
             BareField(query, { query = it.take(MAX_EXERCISE_NAME) }, Modifier.weight(1f), placeholder = "Search or create", size = T.BodyLarge, imeAction = ImeAction.Done, label = "Search or create an exercise", onDone = { if (query.isNotBlank()) create(query.trim().replaceFirstChar { it.uppercaseChar() }) })
-            if (q0.isNotEmpty() && exercises.any { it.name.contains(q0, ignoreCase = true) }) Mute("${exercises.count { it.name.contains(q0, ignoreCase = true) }} found", size = T.Small)
+            if (q0.isNotEmpty() && matches.isNotEmpty()) Mute("${matches.size} found", size = T.Small)
         }
         val q = query.trim()
-        val matches = exercises.filter { q.isEmpty() || it.name.contains(q, ignoreCase = true) }.sortedBy { it.name.lowercase() }
         val exact = matches.any { it.name.equals(q, ignoreCase = true) }
         Column(Modifier.weight(1f, fill = false).bleedHorizontally(18.dp).verticalScroll(rememberScrollState()).padding(horizontal = 18.dp)) {
             if (recent.isNotEmpty()) {

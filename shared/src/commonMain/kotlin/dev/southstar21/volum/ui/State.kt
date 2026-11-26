@@ -3,6 +3,8 @@ package dev.southstar21.volum.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import kotlinx.datetime.LocalDate
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -75,6 +77,37 @@ fun rememberNow(periodMs: Long = 1_000): Long {
         }
     }
     return now
+}
+
+/**
+ * The clock rounded down to [stepMs]. It ticks every [periodMs] but only recomposes the caller when
+ * the rounded value changes, so a screen that needs "roughly now" isn't redrawn every tick.
+ */
+@Composable
+fun rememberNowRounded(stepMs: Long, periodMs: Long = 60_000): Long {
+    var now by remember { mutableLongStateOf(nowMillis()) }
+    LaunchedEffect(periodMs) {
+        while (true) {
+            delay(periodMs)
+            now = nowMillis()
+        }
+    }
+    val rounded by remember(stepMs) { derivedStateOf { now / stepMs * stepMs } }
+    return rounded
+}
+
+/** Today's date, which changes the caller only when the day turns over. */
+@Composable
+fun rememberToday(periodMs: Long = 60_000): LocalDate {
+    var now by remember { mutableLongStateOf(nowMillis()) }
+    LaunchedEffect(periodMs) {
+        while (true) {
+            delay(periodMs)
+            now = nowMillis()
+        }
+    }
+    val today by remember { derivedStateOf { localDateOf(now) } }
+    return today
 }
 
 fun ownActives(workouts: Map<String, Workout>, userId: String): List<Workout> =

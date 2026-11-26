@@ -18,8 +18,8 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,9 +59,8 @@ import dev.southstar21.volum.ui.theme.Icons
 import dev.southstar21.volum.ui.theme.Semibold
 import dev.southstar21.volum.ui.theme.T
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.jetbrains.compose.resources.ExperimentalResourceApi
-import org.jetbrains.compose.resources.decodeToImageBitmap
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -137,38 +136,34 @@ private val OnDarkError = Color(0xFFFFB4AB)
  * Full screen, over the tab bar: the picked [photo] under a circle the user drags and pinches it in.
  * [onSave] gets the circle's square at [AVATAR_PX]; [error] is the last save's failure, shown above Save.
  */
-@OptIn(ExperimentalResourceApi::class)
 @Composable
 internal fun AvatarCropScreen(
-    photo: ByteArray,
+    photo: ImageBitmap,
     busy: Boolean,
     error: String?,
     onCancel: () -> Unit,
     onChooseAnother: () -> Unit,
     onSave: (ImageBitmap) -> Unit,
 ) {
-    // Null while decoding; a photo that can't be decoded is a Failed load, not a crash.
-    val image by produceState<ImageLoad>(ImageLoad.Loading, photo) {
-        value = withContext(Dispatchers.Default) { runCatching { photo.decodeToImageBitmap() }.getOrNull() }
-            ?.let { ImageLoad.Ready(it) } ?: ImageLoad.Failed
-    }
     // The crop as laid out now; Save reads it. Replaced when the photo or the circle's size changes.
     var view by remember(photo) { mutableStateOf<CropView?>(null) }
+    // Scaling a big photo takes a moment: done off the main thread, one render at a time.
+    val scope = rememberCoroutineScope()
+    var rendering by remember { mutableStateOf(false) }
 
     Overlay {
-        BackHandler { if (!busy) onCancel() }
+        BackHandler { if (!busy && !rendering) onCancel() }
         Column(Modifier.fillMaxSize().background(CropBackground).navigationBarsPadding()) {
             TopInset(10.dp)
             Toolbar(
-                leading = { CircleButton(Icons.X, "Cancel", tint = OnDark, enabled = !busy) { onCancel() } },
+                leading = { CircleButton(Icons.X, "Cancel", tint = OnDark, enabled = !busy && !rendering) { onCancel() } },
                 center = { Txt("Move and scale", size = T.Body, weight = ExtraBold, color = OnDark) },
             )
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 val density = LocalDensity.current
                 val circle = with(density) { (min(maxWidth.toPx(), maxHeight.toPx()) - 48.dp.toPx()).coerceAtLeast(1f) }
-                val ready = image as? ImageLoad.Ready
-                if (ready != null) {
-                    val bitmap = ready.bitmap
+                run {
+                    val bitmap = photo
                     val crop = remember(bitmap, circle) { CropView(bitmap, circle, initialCropFrame(bitmap.width, bitmap.height, circle)) }
                     SideEffect { view = crop }
                     fun zoomBy(factor: Float): Boolean {
@@ -207,19 +202,27 @@ internal fun AvatarCropScreen(
                         drawPath(hole, CropDim)
                         drawCircle(OnDark.copy(alpha = 0.9f), radius = circle / 2f, center = origin + Offset(circle / 2f, circle / 2f), style = Stroke(2.dp.toPx()))
                     }
-                } else if (image == ImageLoad.Failed) {
-                    Txt("Couldn't open that photo. Choose another one.", Modifier.padding(horizontal = 32.dp), size = T.Body, weight = Semibold, color = OnDarkError, align = TextAlign.Center)
                 }
             }
             Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Txt("Drag to move, pinch to zoom", size = T.Label, color = OnDarkMute)
                 error?.let { Txt(it, size = T.Label, weight = Semibold, color = OnDarkError, align = TextAlign.Center) }
                 Spacer(Modifier.height(2.dp))
-                PrimaryButton("Save photo", enabled = image is ImageLoad.Ready, busy = busy) {
+                PrimaryButton("Save photo", busy = busy || rendering) {
                     val crop = view ?: return@PrimaryButton
-                    onSave(renderCrop(crop.bitmap, cropRect(crop.frame, crop.bitmap.width, crop.bitmap.height, crop.circle)))
+                    if (rendering) return@PrimaryButton
+                    rendering = true
+                    val rect = cropRect(crop.frame, crop.bitmap.width, crop.bitmap.height, crop.circle)
+                    scope.launch {
+                        try {
+                            val rendered = withContext(Dispatchers.Default) { renderCrop(crop.bitmap, rect) }
+                            onSave(rendered)
+                        } finally {
+                            rendering = false
+                        }
+                    }
                 }
-                TextButton("Choose another", color = OnDarkMute) { if (!busy) onChooseAnother() }
+                TextButton("Choose another", color = OnDarkMute) { if (!busy && !rendering) onChooseAnother() }
             }
         }
     }
@@ -228,10 +231,4 @@ internal fun AvatarCropScreen(
 @Stable
 private class CropView(val bitmap: ImageBitmap, val circle: Float, initial: CropFrame) {
     var frame by mutableStateOf(initial)
-}
-
-private sealed interface ImageLoad {
-    data object Loading : ImageLoad
-    data object Failed : ImageLoad
-    class Ready(val bitmap: ImageBitmap) : ImageLoad
 }

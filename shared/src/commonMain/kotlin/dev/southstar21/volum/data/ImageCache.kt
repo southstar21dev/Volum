@@ -4,10 +4,13 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import dev.southstar21.volum.platform.logWarn
+import dev.southstar21.volum.util.newId
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -15,7 +18,8 @@ import kotlinx.io.readByteArray
 
 /**
  * Downloaded images (profile photos), kept on disk so they still show offline. A stored file's name
- * changes whenever it is replaced, so a cached copy never goes stale: it is reused as is.
+ * changes whenever it is replaced, so a cached copy never goes stale: it is reused as is. The folder
+ * is capped at [MAX_FILES] files: past that, the ones not used since the app started go first.
  */
 class ImageCache(
     private val dir: Path,
@@ -26,6 +30,12 @@ class ImageCache(
     private val lock = Mutex()
     private val inFlight = mutableMapOf<String, Deferred<ByteArray?>>()
 
+    /** Held while files are written or pruned, so a [put] and a download of the same image can't interleave. */
+    private val fileLock = Mutex()
+
+    /** File names used or written in this run, oldest use first; only touched under [fileLock]. */
+    private val recent = LinkedHashSet<String>()
+
     /** The image at [url]: from disk if it was fetched before, else downloaded and saved. Null if neither works. */
     suspend fun load(url: String): ByteArray? {
         val job = lock.withLock {
@@ -34,7 +44,8 @@ class ImageCache(
                     try {
                         fetch(url)
                     } finally {
-                        lock.withLock { inFlight.remove(url) }
+                        // Also when cancelled, or the dead Deferred would stay in the map for good.
+                        withContext(NonCancellable) { lock.withLock { inFlight.remove(url) } }
                     }
                 }
             }
@@ -44,14 +55,18 @@ class ImageCache(
 
     /** Saves [bytes] as [url]'s image, so a photo just uploaded shows without downloading it again. */
     suspend fun put(url: String, bytes: ByteArray) {
-        withContext(io) { write(fileOf(url), bytes) }
+        store(fileOf(url), bytes)
+    }
+
+    private suspend fun store(file: Path, bytes: ByteArray) {
+        fileLock.withLock { withContext(io) { write(file, bytes); prune(file) } }
     }
 
     private suspend fun fetch(url: String): ByteArray? {
         val file = fileOf(url)
-        withContext(io) { read(file) }?.let { return it }
+        fileLock.withLock { withContext(io) { read(file)?.also { recent.remove(file.name); recent.add(file.name) } } }?.let { return it }
         val bytes = download(url) ?: return null
-        withContext(io) { write(file, bytes) }
+        store(file, bytes)
         return bytes
     }
 
@@ -67,22 +82,68 @@ class ImageCache(
 
     private fun write(path: Path, bytes: ByteArray) {
         try {
-            SystemFileSystem.createDirectories(dir)
-            val tmp = Path("$path.tmp")
-            SystemFileSystem.sink(tmp).buffered().use { it.write(bytes) }
-            SystemFileSystem.atomicMove(tmp, path)
+            ensureDirectory(dir)
+            // A temp name of its own, so two writers of one image never share a half-written file.
+            val tmp = Path("$path.${newId()}.tmp")
+            try {
+                SystemFileSystem.sink(tmp).buffered().use { it.write(bytes) }
+                SystemFileSystem.atomicMove(tmp, path)
+            } catch (e: Exception) {
+                runCatching { SystemFileSystem.delete(tmp, mustExist = false) }
+                throw e
+            }
+            recent.remove(path.name)
+            recent.add(path.name)
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             // Disk full or similar: the image still shows this time and is downloaded again next time.
+            logWarn("ImageCache", "Couldn't save an image", e)
+        }
+    }
+
+    /**
+     * Keeps the folder to [MAX_FILES]: files not used this run go first, [keep] (just written) never.
+     * Among the files not used this run the order is the file system's: kotlinx-io has no modification
+     * time, and a platform-specific one isn't worth it for a cache this small (what is evicted is
+     * downloaded again on next use). Leftover temp files of a crashed write are removed here; writers
+     * hold [fileLock], so none is in flight.
+     */
+    private fun prune(keep: Path) {
+        try {
+            val (temps, listed) = SystemFileSystem.list(dir).partition { it.name.endsWith(".tmp") }
+            temps.forEach { runCatching { SystemFileSystem.delete(it, mustExist = false) } }
+            val files = listed.filter { it.name != keep.name }
+            var excess = files.size + 1 - MAX_FILES
+            if (excess <= 0) return
+            val (used, unused) = files.partition { it.name in recent }
+            val order = unused + used.sortedBy { f -> recent.indexOf(f.name) }
+            for (f in order) {
+                if (excess-- <= 0) break
+                SystemFileSystem.delete(f, mustExist = false)
+                recent.remove(f.name)
+            }
+        } catch (e: Exception) {
+            logWarn("ImageCache", "Couldn't trim the image cache", e)
         }
     }
 
     internal companion object {
-        /** A file name for [url]: its path and query with anything but letters, digits, '.', '-' and '_' replaced. */
+        const val MAX_FILES = 64
+
+        /**
+         * A file name for [url]: 32 hex digits from two 64-bit FNV-1a hashes of the whole URL. Nothing of
+         * the URL is kept, so no URL can name a path outside the folder, and a long one can't collide
+         * with another by being cut short.
+         */
         fun keyOf(url: String): String {
-            val tail = url.substringAfter("://").substringAfter('/')
-            return tail.map { if (it.isLetterOrDigit() || it == '.' || it == '-' || it == '_') it else '_' }.joinToString("").takeLast(160)
+            var a = -3750763034362895579L // FNV offset basis
+            var b = 7809847782465536322L
+            for (byte in url.encodeToByteArray()) {
+                a = (a xor (byte.toLong() and 0xFF)) * 1099511628211L
+                b = (b xor ((byte.toLong() and 0xFF) + 0x9E)) * 1099511628211L
+            }
+            return a.toULong().toString(16).padStart(16, '0') + b.toULong().toString(16).padStart(16, '0')
         }
     }
 }

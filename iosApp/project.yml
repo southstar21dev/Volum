@@ -56,6 +56,10 @@ targets:
           FULL=$(sed -n 's/^volum.versionName=//p' "$SRCROOT/../gradle.properties")
           NAME=${FULL%%-*}
           RC=$(echo "$FULL" | sed -n 's/.*-rc\.\([0-9]*\)$/\1/p')
+          # Same bounds as androidApp: minor and patch below 100, rc below 99.
+          echo "$FULL" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' || { echo "Unsupported version: $FULL" >&2; exit 1; }
+          echo "$NAME" | awk -F'.' '$2 >= 100 || $3 >= 100 { exit 1 }' || { echo "Version doesn't fit in the build number: $FULL" >&2; exit 1; }
+          [ -z "$RC" ] || [ "$RC" -lt 99 ] || { echo "Version doesn't fit in the build number: $FULL" >&2; exit 1; }
           CODE=$(echo "$NAME" | awk -F'.' -v rc="${RC:-99}" '{ print ($1 * 10000 + $2 * 100 + $3) * 100 + rc }')
           mkdir -p "$DERIVED_FILE_DIR"
           printf '#define VOLUM_VERSION_NAME %s\n#define VOLUM_VERSION_CODE %s\n' "$NAME" "$CODE" > "$DERIVED_FILE_DIR/VolumVersion.h"

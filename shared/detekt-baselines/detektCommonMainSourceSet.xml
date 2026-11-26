@@ -1,0 +1,354 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:Glass.kt:LiquidPane$shape != this@LiquidPane.shape || size != this@LiquidPane.size || layoutDirection != this@LiquidPane.layoutDirection || density != this@LiquidPane.density</ID>
+    <ID>ComplexCondition:Progress.kt:b == null || kg &gt; b.weightKg || (kg == b.weightKg &amp;&amp; set.reps &gt; b.reps)</ID>
+    <ID>ComplexCondition:Progress.kt:g == null || best.weightKg &gt; g.weightKg || (best.weightKg == g.weightKg &amp;&amp; best.reps &gt; g.reps)</ID>
+    <ID>ComplexCondition:Progress.kt:r == null || best.weightKg &gt; r.weightKg || (best.weightKg == r.weightKg &amp;&amp; best.reps &gt; r.reps)</ID>
+    <ID>ComplexCondition:RoutineEditorScreen.kt:index &gt; 0 &amp;&amp; !isOpen &amp;&amp; expanded != previous &amp;&amp; !dragging &amp;&amp; reorder.draggingId != previous</ID>
+    <ID>ComplexCondition:SessionHelpers.kt:id !in ids &amp;&amp; st != null &amp;&amp; !(st.isIdle &amp;&amp; !st.currentState)</ID>
+    <ID>ComplexCondition:WorkoutMerge.kt:entry.name.isBlank() || entry.exerciseId.isEmpty() || entries.any { it.id == entry.id } || entry.sets.map { it.id }.distinct().size != entry.sets.size</ID>
+    <ID>CyclomaticComplexMethod:LocalStore.kt:LocalStore$private fun requeueUnsynced: List&lt;OutboxItem&gt;</ID>
+    <ID>CyclomaticComplexMethod:LocalStore.kt:LocalStore$suspend fun load</ID>
+    <ID>CyclomaticComplexMethod:PocketBase.kt:PocketBase$fun realtime: Job</ID>
+    <ID>CyclomaticComplexMethod:PocketBase.kt:PocketBase$private suspend fun call: JsonElement</ID>
+    <ID>CyclomaticComplexMethod:Progress.kt:fun compareBest: Comparison</ID>
+    <ID>CyclomaticComplexMethod:Progress.kt:fun compareBestIn: Comparison</ID>
+    <ID>CyclomaticComplexMethod:Progress.kt:fun topSetSeries: Map&lt;String, List&lt;ChartPoint&gt;&gt;</ID>
+    <ID>CyclomaticComplexMethod:Progress.kt:private fun countPrs: Int</ID>
+    <ID>CyclomaticComplexMethod:Reorder.kt:Reorder$fun &lt;T&gt; dragBy: Boolean</ID>
+    <ID>CyclomaticComplexMethod:Repository.kt:Repository$private fun LocalStore.Tx.writeWorkout: Workout</ID>
+    <ID>CyclomaticComplexMethod:SyncEngine.kt:SyncEngine$private fun LocalStore.Tx.applyIncoming</ID>
+    <ID>CyclomaticComplexMethod:SyncEngine.kt:SyncEngine$private suspend fun pullCollection</ID>
+    <ID>CyclomaticComplexMethod:SyncEngine.kt:SyncEngine$private suspend fun runSync</ID>
+    <ID>CyclomaticComplexMethod:WorkoutMerge.kt:fun applyWorkoutMutation: List&lt;WorkoutEntry&gt;</ID>
+    <ID>DestructuringDeclarationWithTooManyEntries:LocalStore.kt:LocalStore$val (ex, ro, wo, ob, me) = mutex.withLock { if (dirty == 0 &amp;&amp; !flushing) return dirty = 0 Tables(_exercises.value, _routines.value, _workouts.value, _outbox.value, _meta.value) }</ID>
+    <ID>DestructuringDeclarationWithTooManyEntries:LocalStore.kt:LocalStore$val (exercises, routines, workouts, meta, outbox) = coroutineScope { val ex = async { readTable("exercises", Exercise.serializer()) } val ro = async { readTable("routines", Routine.serializer()) } val wo = async { readTable("workouts", Workout.serializer()) } val me = async { readTable("meta", String.serializer()) } val ob = async { readFile&lt;List&lt;OutboxItem&gt;&gt;("outbox", emptyList(), { VolumJson.decodeFromString(outboxSer, it) }) { json -&gt; (json as JsonArray).mapNotNull { item -&gt; runCatching { VolumJson.decodeFromJsonElement(OutboxItem.serializer(), item) }.getOrNull() } } } LoadedTables(ex.await(), ro.await(), wo.await(), me.await(), ob.await()) }</ID>
+    <ID>DestructuringDeclarationWithTooManyEntries:ProfileScreens.kt:val (title, detail, icon, tint) = when (sync.state) { SyncState.Synced -&gt; Quad("Up to date", sync.lastSyncedAt?.let { "Synced at ${timeOfDay(parseTime(it))}" } ?: "Synced", Icons.CloudCheck, c.accent) SyncState.Pending -&gt; Quad("Syncing", plural(sync.pendingCount, "change") + " waiting", Icons.CloudSync, c.ink) SyncState.Offline -&gt; Quad("Offline", plural(sync.pendingCount, "change") + " saved on this phone", Icons.CloudOff, c.mute) SyncState.Error -&gt; Quad("Sync error", syncErrorDetail(sync.problem), Icons.CloudOff, c.danger) }</ID>
+    <ID>FunctionNaming:Drawable0.commonMain.kt:@InternalResourceApi internal fun _collectCommonMainDrawable0Resources</ID>
+    <ID>FunctionNaming:Font0.commonMain.kt:@InternalResourceApi internal fun _collectCommonMainFont0Resources</ID>
+    <ID>LongMethod:LocalStore.kt:LocalStore$suspend fun load</ID>
+    <ID>LongMethod:PocketBase.kt:PocketBase$fun realtime: Job</ID>
+    <ID>LoopWithTooManyJumpStatements:Progress.kt:for</ID>
+    <ID>LoopWithTooManyJumpStatements:Reorder.kt:while</ID>
+    <ID>LoopWithTooManyJumpStatements:State.kt:for</ID>
+    <ID>LoopWithTooManyJumpStatements:SyncEngine.kt:SyncEngine$while</ID>
+    <ID>MatchingDeclarationName:Stopwatch.kt:Stopwatches</ID>
+    <ID>MaxLineLength:App.kt:internal</ID>
+    <ID>MaxLineLength:AuthScreens.kt:(slideInHorizontally(slide) { dir * it / 3 } + fadeIn(tween(Durations.Fade, delayMillis = Durations.Instant, easing = LinearOutSlowInEasing)))</ID>
+    <ID>MaxLineLength:AuthScreens.kt:.</ID>
+    <ID>MaxLineLength:AuthScreens.kt:LabeledField("Confirm password", confirm, { confirm = it }, keyboardType = KeyboardType.Password, password = true, imeAction = ImeAction.Go, contentType = ContentType.NewPassword, onDone = { submit() })</ID>
+    <ID>MaxLineLength:AuthScreens.kt:LabeledField("Email", email, { email = it }, keyboardType = KeyboardType.Email, contentType = ContentType.EmailAddress + ContentType.Username)</ID>
+    <ID>MaxLineLength:AuthScreens.kt:Mute("At least 8 characters. Routines sync across your devices; finished workouts stay private, even from a partner.", Modifier.padding(start = 8.dp, end = 8.dp, top = 12.dp), size = T.Small)</ID>
+    <ID>MaxLineLength:AuthScreens.kt:NeuField(name, { name = it }, placeholder = "Your name", size = T.Headline, align = TextAlign.Center, height = 70.dp, imeAction = ImeAction.Done, label = "Your name", onDone = { if (name.isNotBlank()) step = 1 })</ID>
+    <ID>MaxLineLength:AuthScreens.kt:Segmented(listOf("Log in", "Create account"), mode, { mode = it; error = null }, Modifier.fillMaxWidth(), height = 44.dp, fill = true)</ID>
+    <ID>MaxLineLength:AuthScreens.kt:Txt("What should we\ncall you?", Modifier.riseIn(), size = T.Hero, weight = ExtraBold, tracking = (-0.035).em, lineHeight = 40.sp)</ID>
+    <ID>MaxLineLength:AuthScreens.kt:UnitTile(WeightUnit.Kg, "Kilograms", unit == WeightUnit.Kg, Modifier.weight(1f)) { unitIndex = WeightUnit.Kg.ordinal }</ID>
+    <ID>MaxLineLength:AuthScreens.kt:UnitTile(WeightUnit.Lb, "Pounds", unit == WeightUnit.Lb, Modifier.weight(1f)) { unitIndex = WeightUnit.Lb.ordinal }</ID>
+    <ID>MaxLineLength:AuthScreens.kt:androidx.compose.animation</ID>
+    <ID>MaxLineLength:AuthScreens.kt:dev.southstar21.volum.ui.components.NumberUnit(formatWeightValue(convert(sample, unit, unit.other)), unit.other.label, size = T.Entry)</ID>
+    <ID>MaxLineLength:AuthScreens.kt:modifier = Modifier.size(size).shadow(18.dp, RoundedCornerShape(size * 0.23f), ambientColor = Volum.colors.iconShadow, spotColor = Volum.colors.iconShadow)</ID>
+    <ID>MaxLineLength:AuthScreens.kt:modifier.heightIn(min = 168.dp).tappable(role = Role.RadioButton, haptic = true, onClick = onClick).semantics { this.selected = selected }.neuToggle(shape, pressed = selected)</ID>
+    <ID>MaxLineLength:AuthScreens.kt:val check by androidx.compose.animation.core.animateFloatAsState(if (selected) 1f else 0f, if (selected) Springs.bouncy() else tween(Durations.Exit), label = "unit check")</ID>
+    <ID>MaxLineLength:AuthScreens.kt:val fill by androidx.compose.animation.core.animateFloatAsState(if (i &lt;= step) 1f else 0f, dev.southstar21.volum.ui.theme.Springs.grow(), label = "step")</ID>
+    <ID>MaxLineLength:AuthScreens.kt:val ink by androidx.compose.animation.animateColorAsState(if (selected) c.accent else c.ink, tween(Durations.Fade), label = "unit ink")</ID>
+    <ID>MaxLineLength:AvatarCrop.kt:Column</ID>
+    <ID>MaxLineLength:AvatarCrop.kt:crop.frame = transformCropFrame(crop.frame, bitmap.width, bitmap.height, circle, Offset(circle / 2f, circle / 2f), Offset.Zero, factor)</ID>
+    <ID>MaxLineLength:AvatarCrop.kt:crop.frame = transformCropFrame(crop.frame, bitmap.width, bitmap.height, circle, centroid - origin, pan, zoom)</ID>
+    <ID>MaxLineLength:AvatarCrop.kt:drawCircle(OnDark.copy(alpha = 0.9f), radius = circle / 2f, center = origin + Offset(circle / 2f, circle / 2f), style = Stroke(2.dp.toPx()))</ID>
+    <ID>MaxLineLength:AvatarCrop.kt:internal</ID>
+    <ID>MaxLineLength:Buttons.kt:.</ID>
+    <ID>MaxLineLength:Buttons.kt:Box</ID>
+    <ID>MaxLineLength:Buttons.kt:drawArc(color, 0f, 270f, false, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.5.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round))</ID>
+    <ID>MaxLineLength:Buttons.kt:fun</ID>
+    <ID>MaxLineLength:Buttons.kt:modifier.fillMaxWidth().heightIn(min = if (subtitle != null) 66.dp else 56.dp).clip(RoundedCornerShape(24.dp)).background(c.dangerSoft).border(1.dp, c.liquidRim.copy(alpha = 0.6f), RoundedCornerShape(24.dp))</ID>
+    <ID>MaxLineLength:Components.kt:Box(modifier.size(size).liquidGlass(CircleShape).clearAndSetSemantics {}, contentAlignment = Alignment.Center) { Icon(icon, tint, size = iconSize) }</ID>
+    <ID>MaxLineLength:Components.kt:androidx.compose.foundation.Image(photo, null, Modifier.matchParentSize().clip(CircleShape), contentScale = androidx.compose.ui.layout.ContentScale.Crop)</ID>
+    <ID>MaxLineLength:Components.kt:fun</ID>
+    <ID>MaxLineLength:EntryList.kt:.</ID>
+    <ID>MaxLineLength:EntryList.kt:AnimatedVisibility</ID>
+    <ID>MaxLineLength:EntryList.kt:Box</ID>
+    <ID>MaxLineLength:EntryList.kt:CircleButton(Icons.Minus, "5 seconds less", repeatable = true) { haptic(Haptic.Tap); actions.onNudge(entry, set.id) { it.copy(seconds = ((it.seconds ?: 0) - 5).coerceAtLeast(0)) } }</ID>
+    <ID>MaxLineLength:EntryList.kt:CircleButton(Icons.Minus, "One rep fewer", repeatable = true) { haptic(Haptic.Tap); actions.onNudge(entry, set.id) { it.copy(reps = (it.reps - 1).coerceAtLeast(0)) } }</ID>
+    <ID>MaxLineLength:EntryList.kt:CircleButton(Icons.Plus, "5 seconds more", repeatable = true) { haptic(Haptic.Tap); actions.onNudge(entry, set.id) { it.copy(seconds = (it.seconds ?: 0) + 5) } }</ID>
+    <ID>MaxLineLength:EntryList.kt:CircleButton(Icons.Plus, "One more rep", repeatable = true) { haptic(Haptic.Tap); actions.onNudge(entry, set.id) { it.copy(reps = it.reps + 1) } }</ID>
+    <ID>MaxLineLength:EntryList.kt:Column</ID>
+    <ID>MaxLineLength:EntryList.kt:GlassCard</ID>
+    <ID>MaxLineLength:EntryList.kt:Icon(Icons.Check, when { set.done -&gt; c.onAccent; current -&gt; c.accent; else -&gt; c.mute }, size = 20.dp, contentDescription = if (set.done) "Set ${index + 1} done" else "Log set ${index + 1}")</ID>
+    <ID>MaxLineLength:EntryList.kt:Modifier.fillMaxWidth().heightIn(min = 58.dp).tappable(highlight = false) { actions.onExpand(entry) }.padding(horizontal = 14.dp, vertical = 6.dp)</ID>
+    <ID>MaxLineLength:EntryList.kt:Row</ID>
+    <ID>MaxLineLength:EntryList.kt:Txt("${formatWeightValue(convert(weight, preferred, preferred.other))} ${preferred.other.label}", size = T.Micro, color = c.mute, tabular = true)</ID>
+    <ID>MaxLineLength:EntryList.kt:Txt(if (running != null) "Holding" else "Hold", size = T.Small, weight = Semibold, color = if (running != null) c.accent else c.mute)</ID>
+    <ID>MaxLineLength:EntryList.kt:else -&gt; Mute("$doneCount of ${entry.sets.size} sets" + (lastLabel?.let { ", last $it" } ?: ""), size = T.Small, maxLines = 1)</ID>
+    <ID>MaxLineLength:EntryList.kt:enter = fadeIn(tween(Durations.Fade, delayMillis = Durations.Exit)) + expandVertically(Springs.settle(), expandFrom = Alignment.Top)</ID>
+    <ID>MaxLineLength:EntryList.kt:enter = fadeIn(tween(Durations.Fade, delayMillis = Durations.Instant)) + expandVertically(Springs.settle(), expandFrom = Alignment.Top)</ID>
+    <ID>MaxLineLength:EntryList.kt:fun</ID>
+    <ID>MaxLineLength:EntryList.kt:haptic(Haptic.Tap); actions.onNudge(entry, set.id) { nudgedSet(it, preferred, actions.keepSetUnits, up = false) }</ID>
+    <ID>MaxLineLength:EntryList.kt:if (!entry.isSkipped) entry.note?.trim()?.takeIf { it.isNotEmpty() }?.let { Mute(it, size = T.Small, maxLines = if (expanded) 3 else 1) }</ID>
+    <ID>MaxLineLength:EntryList.kt:null -&gt; Txt("${index + 1}", size = T.Small, weight = if (current) ExtraBold else Bold, color = if (current) c.accent else c.mute, tabular = true)</ID>
+    <ID>MaxLineLength:EntryList.kt:private</ID>
+    <ID>MaxLineLength:EntryList.kt:val after = entries.map { e -&gt; if (e.id == entry.id) e.copy(sets = e.sets.map { if (it.id == set.id) it.copy(done = true) else it }) else e }</ID>
+    <ID>MaxLineLength:EntryList.kt:val visible = androidx.compose.runtime.remember { androidx.compose.animation.core.MutableTransitionState(entry.id in initial).apply { targetState = true } }</ID>
+    <ID>MaxLineLength:ErrorMessages.kt:else -&gt; e.fieldMessage ?: if (register) "Couldn't create your account. Check your email and try again." else "Couldn't sign in. Try again."</ID>
+    <ID>MaxLineLength:Fields.kt:BareField(value, onValueChange, Modifier.fillMaxWidth(), keyboardType = keyboardType, password = password, imeAction = imeAction, onDone = onDone, label = label, contentType = contentType)</ID>
+    <ID>MaxLineLength:Fields.kt:BareField(value, onValueChange, Modifier.weight(1f), placeholder, size, keyboardType = keyboardType, password = password, imeAction = imeAction, onDone = onDone, align = align, label = label ?: placeholder.ifEmpty { null })</ID>
+    <ID>MaxLineLength:Fields.kt:fun</ID>
+    <ID>MaxLineLength:Fields.kt:keyboardActions = if (onDone == null) KeyboardActions.Default else KeyboardActions(onDone = { onDone() }, onGo = { onDone() }, onSearch = { onDone() }, onSend = { onDone() })</ID>
+    <ID>MaxLineLength:Glass.kt:LiquidPane$glow = Brush.verticalGradient(0f to Color.Transparent, 0.55f to Color.White.copy(alpha = 0.10f), 1f to Color.White.copy(alpha = 0.20f), startY = size.height - glowHeight, endY = size.height)</ID>
+    <ID>MaxLineLength:Glass.kt:LiquidPane$if</ID>
+    <ID>MaxLineLength:Glass.kt:listOf(Offset(0f, 0f), Offset(w, 0f), Offset(0f, h), Offset(w, h)).maxOf { sqrt((it.x - p.x) * (it.x - p.x) + (it.y - p.y) * (it.y - p.y)) }</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:.</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:AnimatedNumber(stats.second) { avg -&gt; HeatStat(formatWeightValue((avg * 10).roundToInt() / 10.0), "", "a week, avg", Modifier.weight(1f)) }</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:Column</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:Mute(listOf("${weekdayShort(d)} ${d.day} ${monthShort(d)}", duration, plural(sets, "set")).filter { it.isNotEmpty() }.joinToString(", "), size = T.Small, maxLines = 1)</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:Mute(listOf(durationLabel(w.startedAt, w.finishedAt), plural(sets, "set")).filter { it.isNotEmpty() }.joinToString(", "), size = T.Caption)</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:Row</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:SetRow(label, setText(set, entry.isTimed, prefs.unit), done = set.done, top = top) { editIds = entry.id to set.id }</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:Txt(" " + volume.substringAfterLast(' '), Modifier.padding(bottom = 3.dp), size = T.Small, weight = Semibold, color = c.mute, maxLines = 1)</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:Txt(label, Modifier.width(28.dp), size = T.Label, weight = Bold, color = if (top) c.onAccent.copy(alpha = 0.75f) else c.mute, tabular = true)</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:Txt(label.uppercase(), Modifier.weight(1f), size = T.Small, weight = ExtraBold, color = Volum.colors.accent, tracking = 0.02.em)</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:Txt(volume.substringBeforeLast(' '), size = T.Heading, weight = ExtraBold, tracking = (-0.02).em, tabular = true, maxLines = 1)</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:WorkoutRow(w, prefs.unit, onClick = { nav.push(Route.WorkoutDetail(w.id)) }, onLongClick = { deleteTargetId = w.id })</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:editIds?.let { (entryId, setId) -&gt; workout?.entries?.firstOrNull { it.id == entryId }?.let { e -&gt; e.sets.firstOrNull { it.id == setId }?.let { e to it } } }</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:entry.note?.trim()?.takeIf { it.isNotEmpty() }?.let { Mute(it, size = T.Small, maxLines = if (expanded) 3 else 1) }</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:if (col * 7 + row == todayIndex) drawRoundRect(c.accent.copy(alpha = alpha), origin, Size(s, s), radius, style = Stroke(1.5.dp.toPx()))</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:if (entry.exerciseId.isNotEmpty()) TextButton("Lift history", size = T.Small) { nav.push(Route.ExerciseDetail(entry.exerciseId)) }</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:if (routine != null &amp;&amp; routineUpdate != null) CircleButton(Icons.Refresh, "Update ${routine.name} from this workout") { updatePrompt = true }</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:if (unit.isNotEmpty()) Txt(" $unit", Modifier.padding(bottom = 3.dp), size = T.Caption, weight = Semibold, color = Volum.colors.mute, maxLines = 1)</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:message = deleting?.let { "${weekdayName(localDateOf(workoutTime(it)))} ${localDateOf(workoutTime(it)).day} ${monthName(localDateOf(workoutTime(it)))}. This can't be undone." }</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:onConfirm = { if (routine != null &amp;&amp; routineUpdate != null) scope.launch { session.repository.saveRoutine(routine.id, routine.name, routineUpdate) } }</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:onRemove = { entry, set -&gt; workout?.let { w -&gt; scope.launch { session.repository.updateWorkout(w, w.entries.map { e -&gt; if (e.id == entry.id) e.copy(sets = e.sets.filterNot { it.id == set.id }) else e }) } } }</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:onSave = { entry, set -&gt; workout?.let { w -&gt; scope.launch { session.repository.updateWorkout(w, w.entries.map { e -&gt; if (e.id == entry.id) e.copy(sets = e.sets.map { if (it.id == set.id) set else it }) else e }) } } }</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:private</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:scope.launch { session.repository.updateWorkout(workout, workout.entries.map { if (it.id == entry.id) it.copy(sets = it.sets + set) else it }) }</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:val routineUpdate = if (workout != null &amp;&amp; routine != null) applySessionToRoutine(routine.items, workout.entries, ::newId).takeIf { it != routine.items } else null</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:val topId = best?.let { b -&gt; entry.sets.firstOrNull { it.done &amp;&amp; it.tag != SetTag.Warmup &amp;&amp; toKg(it.weight, it.unit) == b.weightKg &amp;&amp; it.reps == b.reps }?.id }</ID>
+    <ID>MaxLineLength:HistoryScreens.kt:var open by rememberSaveable(stateSaver = IdSetSaver) { mutableStateOf(workout?.entries?.firstOrNull { !it.isSkipped }?.id?.let { setOf(it) } ?: emptySet()) }</ID>
+    <ID>MaxLineLength:Icons.kt:Icons$"M4.9 12.4L12 6.5l7.1 5.9V19.8a1.7 1.7 0 0 1-1.7 1.7H14.2v-5.2a.8 .8 0 0 0-.8-.8h-2.8a.8 .8 0 0 0-.8 .8v5.2H6.6a1.7 1.7 0 0 1-1.7-1.7z"</ID>
+    <ID>MaxLineLength:Icons.kt:Icons$fills.forEach { d -&gt; addPath(pathData = PathParser().parsePathString(d).toNodes(), pathFillType = PathFillType.EvenOdd, fill = SolidColor(Color.Black)) }</ID>
+    <ID>MaxLineLength:Icons.kt:Icons$val Camera = stroke("camera", "M3 8a2 2 0 0 1 2-2h2l2-2h6l2 2h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z", circle(12f, 13f, 3.5f))</ID>
+    <ID>MaxLineLength:Icons.kt:Icons$val Grip = fill("grip", circle(9f, 6f, 1.4f), circle(15f, 6f, 1.4f), circle(9f, 12f, 1.4f), circle(15f, 12f, 1.4f), circle(9f, 18f, 1.4f), circle(15f, 18f, 1.4f))</ID>
+    <ID>MaxLineLength:ImageCache.kt:ImageCache$if (SystemFileSystem.exists(path)) SystemFileSystem.source(path).buffered().use { it.readByteArray() }.takeIf { it.isNotEmpty() } else null</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:BareField(draft, { draft = it.take(MAX_EXERCISE_NAME) }, Modifier.fillMaxWidth(), placeholder = "Exercise name", imeAction = androidx.compose.ui.text.input.ImeAction.Done, label = "Exercise name")</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:BareField(query, { query = it }, Modifier.weight(1f), placeholder = "Search", size = T.BodyLarge, weight = androidx.compose.ui.text.font.FontWeight.Normal, imeAction = androidx.compose.ui.text.input.ImeAction.Search, label = "Search exercises")</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) { Mute("Log a session to see your trend.") }</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:Box(Modifier.size(30.dp).liquidGlass(CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.X, c.ink, size = 14.dp) }</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:CircleButton(Icons.Sort, if (sort == LiftSort.Alphabetical) "Sort, A to Z" else "Sort, recently done first", size = 48.dp, tint = c.accent) { sortMenu = true }</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:Column</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:GlassCard</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:LazyRow</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:LiftSort.Recent -&gt; matching.sortedWith(compareByDescending&lt;Exercise&gt; { series[it.id]?.lastOrNull()?.time ?: 0L }.thenBy { it.name.lowercase() })</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:ListLabel(if (sort == LiftSort.Alphabetical) "ALL, A–Z" else "RECENTLY DONE", Modifier.padding(top = if (showRail) 4.dp else 20.dp))</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:Modifier.fillMaxWidth().tappable { nav.push(Route.ExerciseDetail(ex.id)) }.padding(horizontal = 14.dp, vertical = 11.dp)</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:Mute(if (query.isBlank()) "No exercises yet. Add them from a routine." else "No match for “$query”. Check spelling or add it from a routine.", size = T.Label)</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:Mute(if (timed) "Longest hold per session." else if (bodyweight) "Most reps per session." else "Capsules show reps on the top set.", Modifier.padding(start = 4.dp, top = 6.dp), size = T.Caption)</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:Mute(label ?: if (ex.isTimed) "Timed, not done yet" else "Not done yet", size = T.Caption, maxLines = 1)</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:Row</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:Segmented(ChartRange.entries.map { it.label }, range.ordinal, { range = ChartRange.entries[it] }, Modifier.fillMaxWidth(), height = 36.dp, fill = true)</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:SetLine("${i + 1}", if (entryTimed) (if (s.weight &gt; 0) "${formatWeightValue(v)} ${unit.label} × ${formatSeconds(s.seconds ?: 0)}" else formatSeconds(s.seconds ?: 0)) else if (s.weight == 0.0) plural(s.reps, "rep") else "${formatWeightValue(v)} ${unit.label} × ${s.reps}", strong = s.id == topId)</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:Txt("${shortDate(workoutTime(w))}, ${w.routineName}", Modifier.weight(1f), size = T.Body, weight = Bold, maxLines = 1)</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:Txt(letter.toString(), Modifier.padding(start = 22.dp, top = 6.dp, bottom = 8.dp).riseIn(14f), size = T.Small, weight = ExtraBold, color = c.accent)</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:Txt(text, modifier.padding(start = 22.dp, end = 22.dp, bottom = 8.dp).riseIn(14f), size = T.Small, weight = ExtraBold, color = Volum.colors.accent, tracking = 0.02.em)</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:bestSetIn(listOf(w), exerciseId, Int.MAX_VALUE)?.let { b -&gt; done.firstOrNull { it.tag != SetTag.Warmup &amp;&amp; toKg(it.weight, it.unit) == b.weightKg &amp;&amp; it.reps == b.reps }?.id }</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:delta?.takeIf { abs(it) &gt; 0.01 }?.let { d -&gt; (if (d &gt; 0) "+" else "−") + if (timed) "${abs(d).toInt()} s" else if (bodyweight) plural(abs(d).toInt(), "rep") else "${formatWeightValue(abs(display(d)))} ${unit.label}" }</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:drawLine(c.line, Offset(left, gy), Offset(right, gy), 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 4.dp.toPx())))</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:drawLine(line, Offset(0f, size.height), Offset(size.width, size.height), 2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(2.dp.toPx(), 4.dp.toPx())), cap = StrokeCap.Round)</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:drawRoundRect(if (i == selected) c.soft else c.row, Offset(px - capW / 2, py - capW / 2), Size(capW, baseY - py + capW / 2), CornerRadius(capW / 2))</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:drawText(m, topLeft = Offset((x(i) - m.size.width / 2).coerceIn(0f, size.width - m.size.width), size.height - m.size.height.toFloat()))</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:else</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:if (figureUnit.isNotEmpty()) Txt(figureUnit, Modifier.padding(bottom = 3.dp), size = T.Small, weight = Semibold, color = c.mute, maxLines = 1)</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:if (p &gt;= 0.98f) drawCircle(color, 2.6.dp.toPx() * ((p - 0.98f) / 0.02f).coerceIn(0f, 1f), Offset(x(values.lastIndex), y(values.last())))</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:latest?.let { if (timed) formatSeconds(it.value.toInt()) else if (bodyweight) "${it.reps}" else formatWeightValue(display(it.value)) } ?: "-"</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:pr?.let { if (timed) formatSeconds(it.value.toInt()) else if (bodyweight) "${it.reps}" else formatWeightValue(display(it.value)) } ?: "-"</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:repeat(empty) { i -&gt; Box(Modifier.weight(1f).fillMaxHeight(0.14f).growUp(i).clip(RoundedCornerShape(6.dp)).background(c.ink.copy(alpha = 0.07f))) }</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:trailing = { if (exercise != null &amp;&amp; exercise.owner == session.user.id) CircleButton(Icons.More, "More options for $name") { menu = true } }</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:val delta = if (latest != null &amp;&amp; previous != null) { if (bodyweight) (latest.reps - previous.reps).toDouble() else latest.value - previous.value } else null</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:val labels = remember(lastEntries, live) { live.associate { ex -&gt; ex.id to lastEntries[ex.id]?.let { lastTopSetLabel(it.sets, it.isTimed) } } }</ID>
+    <ID>MaxLineLength:LiftsScreens.kt:val sessions = remember(own) { own.filter { it.finishedAt != null &amp;&amp; !it.deleted &amp;&amp; it.entries.any { e -&gt; e.exerciseId == exerciseId &amp;&amp; !e.isSkipped } }.sortedByDescending { workoutTime(it) } }</ID>
+    <ID>MaxLineLength:LocalStore.kt:LocalStore$(json as JsonArray).mapNotNull { item -&gt; runCatching { VolumJson.decodeFromJsonElement(OutboxItem.serializer(), item) }.getOrNull() }</ID>
+    <ID>MaxLineLength:LocalStore.kt:LocalStore$for</ID>
+    <ID>MaxLineLength:Motion.kt:/** Animates a number toward [target], counting up from zero on entrance. Read it only where the number is drawn, so only that scope recomposes. */</ID>
+    <ID>MaxLineLength:Motion.kt:drawCircle(color.copy(alpha = 0.45f * fade), radius = r * (1f + 0.6f * b), style = Stroke(width = (1f + 2.5f * fade) * 1.dp.toPx()))</ID>
+    <ID>MaxLineLength:NativeSegmented.kt:typealias</ID>
+    <ID>MaxLineLength:PartnerRepository.kt:PartnerRepository$is WorkoutMutation.AddEntry -&gt; { put("kind", "addEntry"); put("entry", VolumJson.encodeToJsonElement(WorkoutEntry.serializer(), m.entry)) }</ID>
+    <ID>MaxLineLength:PartnerRepository.kt:PartnerRepository$suspend fun cancelRequest</ID>
+    <ID>MaxLineLength:PartnerRepository.kt:PartnerRepository$suspend fun requestPair</ID>
+    <ID>MaxLineLength:PartnerSessionScreen.kt:Column</ID>
+    <ID>MaxLineLength:PartnerSessionScreen.kt:DeleteExerciseSheet(deleteEntry, null, onDelete = { e, _ -&gt; mutate(WorkoutMutation.RemoveEntry(e.id)) }, onDismiss = { deleteEntry = null })</ID>
+    <ID>MaxLineLength:PartnerSessionScreen.kt:GlassButton(if (nav.stack.any { it.route is Route.Session }) "Back to my session" else "Back", Modifier.weight(1f), height = 58.dp, icon = Icons.ChevronLeft) { nav.pop() }</ID>
+    <ID>MaxLineLength:PartnerSessionScreen.kt:Mute("$done of $total sets, ${w.entries.count { it.isComplete() }} of ${plural(w.entries.size, "exercise")}", size = T.Label)</ID>
+    <ID>MaxLineLength:PartnerSessionScreen.kt:Row</ID>
+    <ID>MaxLineLength:PartnerSessionScreen.kt:SheetAction(if (m.isSkipped) "Unskip" else "Skip", Icons.Skip) { mutate(WorkoutMutation.UpdateEntry(m.id, skipped = !m.isSkipped)) }</ID>
+    <ID>MaxLineLength:PartnerSessionScreen.kt:Txt("$partnerName, ${w.routineName}", size = T.Headline, weight = ExtraBold, tracking = T.TitleTracking, maxLines = 2)</ID>
+    <ID>MaxLineLength:PartnerSessionScreen.kt:Txt(error.orEmpty(), Modifier.semantics { liveRegion = LiveRegionMode.Polite }, size = T.BodyLarge, weight = Bold, align = TextAlign.Center)</ID>
+    <ID>MaxLineLength:PartnerSessionScreen.kt:if (current.isTimed != link.isTimed) current.sets.forEach { set -&gt; mutate(WorkoutMutation.Set(e.id, set.id, reshapeSet(set, link.isTimed))) }</ID>
+    <ID>MaxLineLength:PartnerSessionScreen.kt:if (error == null) SyncLagBanner(partnerName, offline = false, pendingSince = waitingSince, lastHeardAt = lastHeardAt, staleAfterMs = 12_000)</ID>
+    <ID>MaxLineLength:PartnerSessionScreen.kt:mutate(WorkoutMutation.AddEntry(session.repository.buildAddedEntry(ex.id, ex.name, ex.isTimed, prefs.unit, fromHistory = false)))</ID>
+    <ID>MaxLineLength:PartnerSessionScreen.kt:onPick = { ex -&gt; mutate(WorkoutMutation.AddEntry(session.repository.buildAddedEntry(ex.id, ex.name, ex.isTimed, prefs.unit, fromHistory = false))) }</ID>
+    <ID>MaxLineLength:PocketBase.kt:PbException$get() = data?.values?.firstNotNullOfOrNull { ((it as? JsonObject)?.get("message") as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) }</ID>
+    <ID>MaxLineLength:PocketBase.kt:PocketBase$putJsonArray("subscriptions") { topics.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) } }</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:BareField(draft, { draft = it }, Modifier.fillMaxWidth(), placeholder = "Your name", imeAction = ImeAction.Done, label = "Display name", contentType = ContentType.PersonFullName)</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:BareField(email, { email = it }, Modifier.fillMaxWidth(), placeholder = "alex@example.com", keyboardType = KeyboardType.Email, imeAction = ImeAction.Send, label = "Partner email", contentType = ContentType.EmailAddress, onDone = ::send)</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:Column</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:GlassButton("Decline", Modifier.weight(1f), height = 46.dp, enabled = !busy) { run { session.partner.decline(req.id) } }</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:GlassCard</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:Mute("They need a Volum account with this exact email.", Modifier.fillMaxWidth().padding(top = 8.dp), size = T.Caption, align = androidx.compose.ui.text.style.TextAlign.Center)</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:PrimaryButton("Accept", Modifier.weight(1f), height = 46.dp, enabled = !busy) { run { session.partner.accept(req.id); nav.pop() } }</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:Row</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:Segmented(listOf("Glow", "Solid"), if (prefs.solidBackground) 1 else 0, { i -&gt; app.updatePrefs { it.copy(solidBackground = i == 1) } }, height = 40.dp)</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:Segmented(listOf("kg", "lb"), if (prefs.unit == WeightUnit.Kg) 0 else 1, { i -&gt; app.updatePrefs { it.copy(unit = if (i == 0) WeightUnit.Kg else WeightUnit.Lb) } }, height = 40.dp)</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:SyncState.Synced -&gt; Quad("Up to date", sync.lastSyncedAt?.let { "Synced at ${timeOfDay(parseTime(it))}" } ?: "Synced", Icons.CloudCheck, c.accent)</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:Txt(if (incoming &gt; 0) "${plural(incoming, "pair request")} for you" else if (snapshot.outgoing.isNotEmpty()) "Invite sent" else "Add a partner", size = T.Body, weight = Bold)</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:fun send</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:message = if (sync.pendingCount &gt; 0) "${plural(sync.pendingCount, "change")} haven't synced yet and will stay on this phone." else "Your data stays in your account."</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:message?.let { Txt(it, Modifier.padding(start = 24.dp, top = 10.dp).semantics { liveRegion = LiveRegionMode.Polite }, size = T.Small, color = c.accent, weight = Semibold) }</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:photoError = actionErrorMessage(e, "You're offline. Try again once you're connected.", "Couldn't remove your photo. Try again.", serverText = false)</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:private</ID>
+    <ID>MaxLineLength:ProfileScreens.kt:saveError = actionErrorMessage(e, "You're offline. Try again once you're connected.", "Couldn't save your photo. Try again.")</ID>
+    <ID>MaxLineLength:Progress.kt:Sentence$Finished : Sentence</ID>
+    <ID>MaxLineLength:Progress.kt:Sentence$Matched : Sentence</ID>
+    <ID>MaxLineLength:Progress.kt:if (b == null || kg &gt; b.weightKg || (kg == b.weightKg &amp;&amp; set.reps &gt; b.reps)) perLift[entry.exerciseId] = BestSet(set.weight, set.unit, kg, set.reps, t.time)</ID>
+    <ID>MaxLineLength:Progress.kt:val recentStart = today.minus(DatePeriod(days = PERIOD_DAYS)).atStartOfDayIn(localZone).toEpochMilliseconds() + (now - today.atStartOfDayIn(localZone).toEpochMilliseconds())</ID>
+    <ID>MaxLineLength:Records.kt:val required = (0 until descriptor.elementsCount).filterNot { descriptor.isElementOptional(it) }.map { descriptor.getElementName(it) }.toSet()</ID>
+    <ID>MaxLineLength:Repository.kt:Repository$List(3) { SetEntry(id = newId(), weight = 0.0, unit = preferred, reps = if (timed) 0 else 8, seconds = if (timed) 30 else null) }</ID>
+    <ID>MaxLineLength:Repository.kt:Repository$entries = stampChangedSets(existing?.entries, if (active != null) withRemovedSets(active.entries, entries) else entries, isoOf(stampClock()))</ID>
+    <ID>MaxLineLength:Repository.kt:Repository$if (completed.size == lastEntriesCompleted.size &amp;&amp; completed.indices.all { completed[it] === lastEntriesCompleted[it] }) return lastEntries</ID>
+    <ID>MaxLineLength:Repository.kt:Repository$replaceOutbox(collection.wire, recordId) { id -&gt; OutboxItem(id = id, collection = collection.wire, recordId = recordId, payload = payload, createdAt = nowIso(), isNew = isNew) }</ID>
+    <ID>MaxLineLength:Repository.kt:Repository$source.map { SetEntry(id = newId(), weight = it.weight, unit = it.unit, reps = if (timed) 0 else it.reps, seconds = if (timed) it.seconds ?: 30 else null) }</ID>
+    <ID>MaxLineLength:Repository.kt:Repository$suspend</ID>
+    <ID>MaxLineLength:Repository.kt:Repository$val existing = workouts[id]?.takeIf { it.status == WorkoutStatus.Active &amp;&amp; !it.deleted &amp;&amp; it.owner == owner } ?: return@mapNotNull null</ID>
+    <ID>MaxLineLength:Repository.kt:Repository$val r = it.copy(items = it.items.map { i -&gt; if (i.exerciseId == id) i.copy(name = newName) else i }, updatedAt = nowIso(), updated = null)</ID>
+    <ID>MaxLineLength:Repository.kt:Repository$val source = if (fromHistory) lastEntryFor(exerciseId)?.sets?.filter { it.done &amp;&amp; it.tag != SetTag.Warmup }.orEmpty() else emptyList()</ID>
+    <ID>MaxLineLength:Repository.kt:return exercises.values.firstOrNull { it.owner == owner &amp;&amp; !it.deleted &amp;&amp; it.id != exceptId &amp;&amp; it.name.trim().equals(wanted, ignoreCase = true) }</ID>
+    <ID>MaxLineLength:Repository.kt:timed -&gt; if (top.weight &gt; 0) "${formatWeight(top.weight, top.unit)} × ${formatSeconds(top.seconds ?: 0)}" else formatSeconds(top.seconds ?: 0)</ID>
+    <ID>MaxLineLength:RoutineEditorScreen.kt:BareField(item.note.orEmpty(), { text -&gt; update { it.copy(note = text.ifEmpty { null }) } }, Modifier.fillMaxWidth(), placeholder = "Note", size = T.Label, weight = androidx.compose.ui.text.font.FontWeight.Normal, label = "Note for ${item.name}")</ID>
+    <ID>MaxLineLength:RoutineEditorScreen.kt:BareField(name, { name = it.take(MAX_EXERCISE_NAME) }, Modifier.fillMaxWidth(), placeholder = "Exercise name", imeAction = ImeAction.Done, label = "Exercise name")</ID>
+    <ID>MaxLineLength:RoutineEditorScreen.kt:BareField(name, { name = it.take(MAX_ROUTINE_NAME); error = null }, Modifier.fillMaxWidth(), placeholder = "Push A", size = T.Heading, weight = ExtraBold, imeAction = ImeAction.Done, label = "Routine name")</ID>
+    <ID>MaxLineLength:RoutineEditorScreen.kt:Box</ID>
+    <ID>MaxLineLength:RoutineEditorScreen.kt:CircleButton(Icons.Minus, "Fewer $label".lowercase(), enabled = value &gt; min, repeatable = true) { onChange(stepDown(value, step, min, max)) }</ID>
+    <ID>MaxLineLength:RoutineEditorScreen.kt:CircleButton(Icons.Plus, "More $label".lowercase(), enabled = value &lt; max, repeatable = true) { onChange(stepUp(value, step, min, max)) }</ID>
+    <ID>MaxLineLength:RoutineEditorScreen.kt:Column</ID>
+    <ID>MaxLineLength:RoutineEditorScreen.kt:StepperRow(if (timed) "Seconds" else "Reps", item.targetReps, if (timed) 5 else 1, if (timed) 600 else 100, step = if (timed) 5 else 1) { v -&gt; update { it.copy(targetReps = v) } }</ID>
+    <ID>MaxLineLength:RoutineEditorScreen.kt:Txt("$value", Modifier.width(48.dp), size = T.SheetTitle, weight = ExtraBold, tabular = true, align = androidx.compose.ui.text.style.TextAlign.Center)</ID>
+    <ID>MaxLineLength:RoutineEditorScreen.kt:enter = fadeIn(tween(Durations.Fade, delayMillis = Durations.Instant)) + expandVertically(Springs.settle(), expandFrom = Alignment.Top)</ID>
+    <ID>MaxLineLength:RoutineEditorScreen.kt:if (divider &gt; 0f) drawRect(c.line, topLeft = Offset(14.dp.toPx(), 0f), size = Size(size.width - 28.dp.toPx(), 1.dp.toPx()), alpha = divider)</ID>
+    <ID>MaxLineLength:RoutineEditorScreen.kt:if (index &lt; items.lastIndex) add(CustomAccessibilityAction("Move ${item.name} down") { move(item.id, 1); true })</ID>
+    <ID>MaxLineLength:RoutineEditorScreen.kt:restore = { saved -&gt; mutableStateListOf&lt;RoutineItem&gt;().apply { addAll(runCatching { VolumJson.decodeFromString(ListSerializer(RoutineItem.serializer()), saved) }.getOrDefault(emptyList())) } }</ID>
+    <ID>MaxLineLength:RoutineEditorScreen.kt:val items = rememberSaveable(saver = RoutineItemsSaver) { mutableStateListOf&lt;RoutineItem&gt;().apply { addAll(existing?.items.orEmpty()) } }</ID>
+    <ID>MaxLineLength:SessionBody.kt:AnimatedVisibility</ID>
+    <ID>MaxLineLength:SessionBody.kt:Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp).fillMaxWidth().height(6.dp).background(c.line, CircleShape)</ID>
+    <ID>MaxLineLength:SessionBody.kt:enter = fadeIn(tween(Durations.Enter, delayMillis = Durations.Exit)) + expandVertically(Springs.settle(), expandFrom = Alignment.Top)</ID>
+    <ID>MaxLineLength:SessionBody.kt:if (index &lt; activeIds.lastIndex) add(CustomAccessibilityAction("Move ${e.name} down") { moveBy(e.id, 1); true })</ID>
+    <ID>MaxLineLength:SessionHelpers.kt:enter = fadeIn(tween(Durations.Fade, delayMillis = Durations.Instant)) + expandVertically(Springs.settle(), expandFrom = Alignment.Top)</ID>
+    <ID>MaxLineLength:SessionHelpers.kt:fun</ID>
+    <ID>MaxLineLength:SessionScreen.kt:Box</ID>
+    <ID>MaxLineLength:SessionScreen.kt:Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(13.dp).clip(CircleShape).background(Color.White).padding(2.dp).accentGel(CircleShape))</ID>
+    <ID>MaxLineLength:SessionScreen.kt:Box(Modifier.size(60.dp).celebrate(true, c.accent, initial = false).accentGel(CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Check, c.onAccent, size = 28.dp) }</ID>
+    <ID>MaxLineLength:SessionScreen.kt:Column</ID>
+    <ID>MaxLineLength:SessionScreen.kt:Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(start = 16.dp, end = 16.dp, bottom = 14.dp)</ID>
+    <ID>MaxLineLength:SessionScreen.kt:Mute("Ready to finish? Tap below to record your workout.", Modifier.padding(top = 4.dp), size = T.Label, align = TextAlign.Center)</ID>
+    <ID>MaxLineLength:SessionScreen.kt:SheetAction</ID>
+    <ID>MaxLineLength:SessionScreen.kt:SheetAction("Update ${promptName ?: "the routine"}", Icons.Check, subtitle = "It starts like this next time") { finish(saveOrder = true) }</ID>
+    <ID>MaxLineLength:SessionScreen.kt:fun replaceSet</ID>
+    <ID>MaxLineLength:SessionScreen.kt:if (fromRoutine &amp;&amp; routine != null) repo.saveRoutine(routine.id, routine.name, routine.items.filterNot { it.exerciseId == e.exerciseId })</ID>
+    <ID>MaxLineLength:SessionScreen.kt:if (updateLibrary &amp;&amp; link == null) exercises[e.exerciseId]?.takeIf { it.owner == session.user.id }?.let { repo.saveExercise(it.id, name, it.timed) }</ID>
+    <ID>MaxLineLength:SessionScreen.kt:link != null -&gt; cur.copy(exerciseId = link.id, name = link.name, timed = link.timed, sets = reshapedSets(cur, link.isTimed))</ID>
+    <ID>MaxLineLength:SessionScreen.kt:onRemove = { entry, set -&gt; save(latest().map { e -&gt; if (e.id == entry.id) e.copy(sets = e.sets.filterNot { it.id == set.id }) else e }) }</ID>
+    <ID>MaxLineLength:SessionScreen.kt:repo.updateWorkout(workouts[workoutId] ?: workout, latest() + repo.buildAddedEntry(ex.id, ex.name, ex.isTimed, prefs.unit, fromHistory = true))</ID>
+    <ID>MaxLineLength:SessionScreen.kt:subtitle = m?.let { e -&gt; "${e.sets.count { it.done }} of ${e.sets.size} sets done" + (lastLabels[e.exerciseId]?.let { ", last $it" } ?: "") }</ID>
+    <ID>MaxLineLength:SessionScreen.kt:val routineUpdate = routine?.takeIf { it.owner == session.user.id }?.let { r -&gt; applySessionToRoutine(r.items, workout.entries, ::newId).takeIf { it != r.items } }</ID>
+    <ID>MaxLineLength:Sheets.kt:BareField(name, { name = it.take(MAX_EXERCISE_NAME) }, Modifier.fillMaxWidth(), placeholder = "Exercise name", imeAction = ImeAction.Done, label = "Exercise name")</ID>
+    <ID>MaxLineLength:Sheets.kt:BareField(name, { name = it.take(MAX_ROUTINE_NAME) }, Modifier.fillMaxWidth(), placeholder = "Workout name", imeAction = ImeAction.Done, label = "Workout name")</ID>
+    <ID>MaxLineLength:Sheets.kt:BareField(query, { query = it.take(MAX_EXERCISE_NAME) }, Modifier.weight(1f), placeholder = "Search or create", size = T.BodyLarge, imeAction = ImeAction.Done, label = "Search or create an exercise", onDone = { if (query.isNotBlank()) create(query.trim().replaceFirstChar { it.uppercaseChar() }) })</ID>
+    <ID>MaxLineLength:Sheets.kt:BareField(repsText, { repsText = it.filter { ch -&gt; ch.isAsciiDigit() }.take(4) }, Modifier.fillMaxWidth(), placeholder = "0", size = T.Entry, weight = ExtraBold, keyboardType = KeyboardType.Number, imeAction = ImeAction.Done, label = countLabel)</ID>
+    <ID>MaxLineLength:Sheets.kt:BareField(weightText, { weightText = filterDecimal(it) }, Modifier.fillMaxWidth(), placeholder = "0", size = T.Entry, weight = ExtraBold, keyboardType = KeyboardType.Decimal, label = weightLabel)</ID>
+    <ID>MaxLineLength:Sheets.kt:Box</ID>
+    <ID>MaxLineLength:Sheets.kt:Box(Modifier.fillMaxSize().pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } })</ID>
+    <ID>MaxLineLength:Sheets.kt:Box(Modifier.size(40.dp).accentGel(CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Plus, c.onAccent, size = 20.dp) }</ID>
+    <ID>MaxLineLength:Sheets.kt:Box(Modifier.size(40.dp).liquidGlass(CircleShape), contentAlignment = Alignment.Center) { Txt(initials(ex.name), size = T.Small, weight = ExtraBold, color = c.accent) }</ID>
+    <ID>MaxLineLength:Sheets.kt:Box(Modifier.size(56.dp).clip(CircleShape).background(c.dangerSoft), contentAlignment = Alignment.Center) { Icon(Icons.Trash, c.danger, size = 24.dp) }</ID>
+    <ID>MaxLineLength:Sheets.kt:Column</ID>
+    <ID>MaxLineLength:Sheets.kt:DangerButton("Discard workout", subtitle = "Its sets won't be saved to your history") { once.act { onDiscardWorkout(); onDismiss() } }</ID>
+    <ID>MaxLineLength:Sheets.kt:Modifier.fillMaxWidth().heightIn(min = 60.dp).tappable { pick(ex) }.padding(horizontal = 14.dp, vertical = 8.dp)</ID>
+    <ID>MaxLineLength:Sheets.kt:Modifier.padding(top = if (matches.isEmpty()) 14.dp else 12.dp).fillMaxWidth().tappable { create(newName) }.liquidGlass(RoundedCornerShape(24.dp)).padding(horizontal = 14.dp, vertical = 10.dp)</ID>
+    <ID>MaxLineLength:Sheets.kt:Mute("An added exercise copies the sets from last time you did it. A new one starts with 3 sets of 8.", Modifier.padding(8.dp, 14.dp), size = T.Caption)</ID>
+    <ID>MaxLineLength:Sheets.kt:Mute(if (q.isEmpty()) "All exercises" else "Matches", Modifier.padding(start = 8.dp, top = 16.dp, bottom = 8.dp), weight = Bold)</ID>
+    <ID>MaxLineLength:Sheets.kt:Mute(lastLabels[ex.id]?.let { "Last $it" } ?: if (ex.isTimed) "Timed" else "Not done yet", size = T.Caption, maxLines = 1)</ID>
+    <ID>MaxLineLength:Sheets.kt:Row</ID>
+    <ID>MaxLineLength:Sheets.kt:Segmented(listOf("Working", "Warm-up", "Drop"), when (tag) { null -&gt; 0; SetTag.Warmup -&gt; 1; SetTag.Drop -&gt; 2 }, { tag = when (it) { 1 -&gt; SetTag.Warmup; 2 -&gt; SetTag.Drop; else -&gt; null } }, Modifier.fillMaxWidth(), fill = true)</ID>
+    <ID>MaxLineLength:Sheets.kt:fun</ID>
+    <ID>MaxLineLength:Sheets.kt:internal</ID>
+    <ID>MaxLineLength:Sheets.kt:modifier.fillMaxWidth().heightIn(min = if (action.subtitle != null) 62.dp else 56.dp).tappable(onClick = sheetAction(onClick)).padding(horizontal = 16.dp, vertical = 6.dp)</ID>
+    <ID>MaxLineLength:Sheets.kt:recent.forEach { ex -&gt; TargetPill(height = 36.dp, onClick = { pick(ex) }) { Txt(ex.name, size = T.Small, weight = Semibold) } }</ID>
+    <ID>MaxLineLength:Sheets.kt:suggestions.forEach { ex -&gt; TargetPill(height = 34.dp, onClick = { name = ex.name }) { Txt(ex.name, size = T.Small, weight = Semibold) } }</ID>
+    <ID>MaxLineLength:Sheets.kt:val</ID>
+    <ID>MaxLineLength:Sheets.kt:val suggestions = if (q.length &gt;= 2) exercises.filter { it.name.contains(q, ignoreCase = true) &amp;&amp; it.id != e.exerciseId &amp;&amp; !it.name.equals(q, true) }.take(4) else emptyList()</ID>
+    <ID>MaxLineLength:Sheets.kt:val updated = editedSet(set, entry.isTimed, weightText, openedWeight, unit, repsText.toIntOrNull() ?: 0, tag) ?: return@PrimaryButton</ID>
+    <ID>MaxLineLength:StatusBanner.kt:val spin by rememberInfiniteTransition(label = "banner").animateFloat(0f, 360f, infiniteRepeatable(tween(1600, easing = LinearEasing)), label = "spin")</ID>
+    <ID>MaxLineLength:Stopwatch.kt:Txt(clockLabel(seconds), size = T.Heading, weight = dev.southstar21.volum.ui.theme.ExtraBold, color = Volum.colors.accent, tabular = true)</ID>
+    <ID>MaxLineLength:Stopwatch.kt:modifier.fillMaxWidth().height(46.dp).tappable { haptic(Haptic.Tap); Stopwatches.start(setId) }.liquidGlass(RoundedCornerShape(23.dp))</ID>
+    <ID>MaxLineLength:SyncEngine.kt:SyncEngine$if (pending &gt; 0) updateOutbox { list -&gt; list.filterNot { it.collection == collection.wire &amp;&amp; it.recordId == id &amp;&amp; !it.failed } }</ID>
+    <ID>MaxLineLength:SyncEngine.kt:SyncEngine$updateOutbox { list -&gt; list.map { if (it.collection == collection.wire &amp;&amp; it.recordId == id &amp;&amp; !it.failed) it.copy(payload = payload) else it } }</ID>
+    <ID>MaxLineLength:SyncEngine.kt:SyncEngine$updateOutbox { list -&gt; list.map { if (it.id == item.id) it.copy(failed = true, attempts = it.attempts + 1, lastError = e.message) else it } }</ID>
+    <ID>MaxLineLength:Text.kt:fun</ID>
+    <ID>MaxLineLength:Theme.kt:accent = Color(0xFF1F4D33)</ID>
+    <ID>MaxLineLength:TodayScreen.kt:BasicText(rich(line, c.mute, c.accent), style = textStyle(T.Heading, FontWeight.Medium, c.mute, lineHeight = 27.sp, tracking = (-0.01).em))</ID>
+    <ID>MaxLineLength:TodayScreen.kt:Box</ID>
+    <ID>MaxLineLength:TodayScreen.kt:Box(Modifier.padding(top = 2.dp).size(4.dp).popIn(260L + i * 40L).clip(CircleShape).background(if (day in trained) c.accent else Color.Transparent))</ID>
+    <ID>MaxLineLength:TodayScreen.kt:Box(Modifier.size(48.dp).liquidGlass(RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Dumbbell, c.accent, size = 20.dp) }</ID>
+    <ID>MaxLineLength:TodayScreen.kt:Box(Modifier.weight(1f).fillMaxHeight(f).growUp(i).clip(RoundedCornerShape(20.dp)).background(if (i == 3) c.soft else c.line.copy(alpha = 0.5f)))</ID>
+    <ID>MaxLineLength:TodayScreen.kt:GlassCard</ID>
+    <ID>MaxLineLength:TodayScreen.kt:Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp).fillMaxWidth().tappable(onClick = onClick).glassCard(RoundedCornerShape(24.dp))</ID>
+    <ID>MaxLineLength:TodayScreen.kt:Mute("Build a routine once. Every session after that starts pre-filled with last time's weights and reps.", Modifier.fillMaxWidth(), size = T.Label, align = TextAlign.Center)</ID>
+    <ID>MaxLineLength:TodayScreen.kt:Mute(listOfNotNull(if (prs &gt; 0) "${plural(prs, "PR")} this week" else null, "${plural(monthWorkouts, "workout")} this month").joinToString(", "), size = T.Caption)</ID>
+    <ID>MaxLineLength:TodayScreen.kt:Row</ID>
+    <ID>MaxLineLength:TodayScreen.kt:SmallCircleButton(Icons.Play, if (active) "Resume ${routine.name}" else "Start ${routine.name}", iconSize = 14.dp, accent = highlight || active, onClick = onStart)</ID>
+    <ID>MaxLineLength:TodayScreen.kt:StatusBanner(Icons.CloudOff, "Offline.", "Changes are saved on this phone.", Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp))</ID>
+    <ID>MaxLineLength:TodayScreen.kt:Txt(" " + text.substringAfterLast(' '), Modifier.padding(bottom = 2.dp), size = T.Caption, color = c.mute, weight = Semibold)</ID>
+    <ID>MaxLineLength:TodayScreen.kt:Txt(day.day.toString(), size = T.BodyLarge, weight = Bold, color = when { isToday -&gt; c.accent; future -&gt; c.ink.copy(alpha = 0.45f); else -&gt; c.ink }, tabular = true)</ID>
+    <ID>MaxLineLength:TodayScreen.kt:Txt(label, Modifier.weight(1f), size = T.Tiny, weight = if (i == weeks.lastIndex) ExtraBold else Semibold, color = if (i == weeks.lastIndex) c.ink else c.mute, align = TextAlign.Center, maxLines = 1)</ID>
+    <ID>MaxLineLength:TodayScreen.kt:avatar = { Box(Modifier.size(38.dp).accentGel(CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Play, c.onAccent, size = 14.dp) } }</ID>
+    <ID>MaxLineLength:TodayScreen.kt:fun</ID>
+    <ID>MaxLineLength:TodayScreen.kt:if (s.lead == "at") "${s.name} is up **${s.amount}**\nat ${s.value}" else "${s.name} is up\n**${s.amount}** ${s.lead} ${s.value}"</ID>
+    <ID>MaxLineLength:TodayScreen.kt:is Sentence.Finished -&gt; if (sentence.duration.isEmpty()) "${plural(sentence.improved, "lift")} beat last time on ${sentence.routineName}." else "${sentence.routineName} done in ${sentence.duration}. ${plural(sentence.improved, "lift")} beat last time."</ID>
+    <ID>MaxLineLength:TodayScreen.kt:is Sentence.Finished -&gt; sentence.slides.map { s -&gt; "${s.name} is up\n**${s.amount}** ${if (s.lead == "at") "at" else s.lead} ${s.value}" }</ID>
+    <ID>MaxLineLength:TodayScreen.kt:is Sentence.Matched -&gt; if (sentence.kept) "Add a rep or a little weight to beat it." else sentence.duration.takeIf { it.isNotEmpty() }?.let { "Done in $it." }</ID>
+    <ID>MaxLineLength:TodayScreen.kt:is Sentence.Matched -&gt; listOf(if (sentence.kept) "You matched your last\n**${sentence.routineName}** on **${plural(sentence.matched, "lift")}**." else "**${sentence.routineName} done.**\nYou matched last session.")</ID>
+    <ID>MaxLineLength:TodayScreen.kt:private</ID>
+    <ID>MaxLineLength:TodayScreen.kt:subtitle = "${w.routineName}, ${elapsedLabel(parseTime(w.startedAt), now)}" + if (actives.size &gt; 1) " (+${actives.size - 1} more)" else ""</ID>
+    <ID>MaxLineLength:TodayScreen.kt:val label = if (actives.size &gt; 1) "Discard all ${actives.size} unfinished and start ${r.name}" else "Discard and start ${r.name}"</ID>
+    <ID>MaxLineLength:TodayScreen.kt:val month = remember(ownWorkouts, today) { ownWorkouts.count { it.finishedAt != null &amp;&amp; localDateOf(parseTime(it.finishedAt)).let { d -&gt; d.year == today.year &amp;&amp; d.month == today.month } } }</ID>
+    <ID>MaxLineLength:TodayScreen.kt:val spin by rememberInfiniteTransition(label = "sync").animateFloat(0f, 360f, infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "spin")</ID>
+    <ID>MaxLineLength:TodayScreen.kt:val trained = remember(workouts) { workouts.mapNotNull { w -&gt; w.finishedAt?.let { localDateOf(parseTime(it)) } ?: localDateOf(parseTime(w.startedAt)) }.toSet() }</ID>
+    <ID>MaxLineLength:UpdateRequiredScreen.kt:Mute("This version can no longer sync. Install the latest one to keep logging.", size = T.Body, weight = FontWeight.Medium)</ID>
+    <ID>MaxLineLength:UserSession.kt:UserSession$val partner = PartnerRepository(app.pb, dir, scope, app.ioDispatcher, initialUser.id) { previous, current -&gt; onPartnerChanged(previous, current) }</ID>
+    <ID>MaxLineLength:Util.kt:private val MONTHS = listOf("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")</ID>
+    <ID>MaxLineLength:WorkoutMerge.kt:WorkoutMutation$UpdateEntry : WorkoutMutation</ID>
+    <ID>MaxLineLength:WorkoutMerge.kt:e.copy(sets = e.sets.filterNot { it.id == mutation.setId }, removedSetIds = if (known) removed + mutation.setId else e.removedSetIds)</ID>
+    <ID>MaxLineLength:WorkoutMerge.kt:if</ID>
+    <ID>MaxLineLength:WorkoutMerge.kt:val latest = entries.maxOfOrNull { entry -&gt; maxOf(parseTime(entry.updatedAt), entry.sets.maxOfOrNull { parseTime(it.updatedAt) } ?: 0) } ?: 0</ID>
+    <ID>NestedBlockDepth:Progress.kt:fun bestSetIn: BestSet?</ID>
+    <ID>NestedBlockDepth:Progress.kt:private fun countPrs: Int</ID>
+    <ID>ReturnCount:Progress.kt:fun buildDashboard: Dashboard?</ID>
+    <ID>ReturnCount:Progress.kt:fun compareBest: Comparison</ID>
+    <ID>ReturnCount:Progress.kt:private fun trend: Sentence?</ID>
+    <ID>SwallowedException:PocketBase.kt:PocketBase$e: CancellationException</ID>
+    <ID>SwallowedException:PocketBase.kt:PocketBase$e: Throwable</ID>
+    <ID>SwallowedException:ProfileScreens.kt:e: Exception</ID>
+    <ID>ThrowsCount:PocketBase.kt:PocketBase$private suspend fun call: JsonElement</ID>
+    <ID>ThrowsCount:SyncEngine.kt:SyncEngine$private suspend fun push</ID>
+    <ID>TooGenericExceptionCaught:AppContainer.kt:AppContainer$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:AppContainer.kt:AppContainer$e: Throwable</ID>
+    <ID>TooGenericExceptionCaught:AuthScreens.kt:e: Exception</ID>
+    <ID>TooGenericExceptionCaught:ImageCache.kt:ImageCache$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:LocalStore.kt:JsonFiles$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:LocalStore.kt:LocalStore$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:MutationQueue.kt:MutationQueue$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:PartnerRepository.kt:PartnerRepository$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:PartnerSessionScreen.kt:e: Exception</ID>
+    <ID>TooGenericExceptionCaught:PocketBase.kt:PocketBase$e: Throwable</ID>
+    <ID>TooGenericExceptionCaught:ProfileScreens.kt:e: Exception</ID>
+    <ID>TooGenericExceptionCaught:SyncEngine.kt:SyncEngine$e: Throwable</ID>
+  </CurrentIssues>
+</SmellBaseline>

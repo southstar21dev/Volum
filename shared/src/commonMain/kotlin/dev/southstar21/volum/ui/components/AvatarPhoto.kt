@@ -29,8 +29,9 @@ fun PartnerUser.photoUrl(): String? = LocalApp.current.avatarUrl(id, avatar)
 internal fun rememberPhoto(url: String?): ImageBitmap? {
     if (url == null) return null
     val app = LocalApp.current
-    val photo by produceState(DecodedPhotos.get(url), url) {
-        if (value != null) return@produceState
+    val photo by produceState(DecodedPhotos.peek(url), url) {
+        // The recency bookkeeping happens here, after composition, so reading a photo while composing changes nothing.
+        if (value != null) return@produceState DecodedPhotos.touch(url)
         value = try {
             app.images.load(url)?.let { bytes -> withContext(Dispatchers.Default) { decode(bytes) } }
                 ?.also { DecodedPhotos.put(url, it) }
@@ -46,12 +47,23 @@ internal fun rememberPhoto(url: String?): ImageBitmap? {
 @OptIn(ExperimentalResourceApi::class)
 private fun decode(bytes: ByteArray): ImageBitmap? = runCatching { bytes.decodeToImageBitmap() }.getOrNull()
 
+/** Forgets every decoded photo, so the next account never sees the previous one's (called on sign-out). */
+fun clearDecodedPhotos() = DecodedPhotos.clear()
+
 /** Decoded photos recently shown, so returning to a screen doesn't flash the letter first. */
 private object DecodedPhotos {
     private const val MAX = 16
     private val entries = LinkedHashMap<String, ImageBitmap>()
 
-    fun get(url: String): ImageBitmap? = entries.remove(url)?.also { entries[url] = it }
+    /** Side-effect free, so it is safe to call while composing. */
+    fun peek(url: String): ImageBitmap? = entries[url]
+
+    /** Marks [url] as the most recently shown. */
+    fun touch(url: String) {
+        entries.remove(url)?.let { entries[url] = it }
+    }
+
+    fun clear() = entries.clear()
 
     fun put(url: String, photo: ImageBitmap) {
         entries.remove(url)

@@ -50,7 +50,7 @@ fun epley(weightKg: Double, reps: Int): Double = weightKg * (1 + reps / 30.0)
 fun bestSetIn(workouts: List<Workout>, exerciseId: String, maxReps: Int = MAX_COMPARE_REPS): BestSet? {
     var best: BestSet? = null
     for (w in workouts) {
-        val time = workoutTime(w)
+        var timeValue = Long.MIN_VALUE
         for (entry in w.entries) {
             if (entry.exerciseId != exerciseId) continue
             for (set in workingSets(entry)) {
@@ -59,7 +59,11 @@ fun bestSetIn(workouts: List<Workout>, exerciseId: String, maxReps: Int = MAX_CO
                 if (set.reps > maxReps && set.weight > 0) continue
                 val kg = toKg(set.weight, set.unit)
                 val b = best
-                if (b == null || kg > b.weightKg || (kg == b.weightKg && set.reps > b.reps)) best = BestSet(set.weight, set.unit, kg, set.reps, time)
+                if (b == null || kg > b.weightKg || (kg == b.weightKg && set.reps > b.reps)) {
+                    // Parsed only for a workout that actually holds a candidate, and once per workout.
+                    if (timeValue == Long.MIN_VALUE) timeValue = workoutTime(w)
+                    best = BestSet(set.weight, set.unit, kg, set.reps, timeValue)
+                }
             }
         }
     }
@@ -99,7 +103,8 @@ fun compareBest(now: BestSet, then: BestSet, unit: WeightUnit): Comparison {
     val nowE = epley(now.weightKg, now.reps)
     val thenE = epley(then.weightKg, then.reps)
     if (nowE < thenE - 1e-9) return Comparison.Worse
-    val gain = nowE / thenE - 1
+    // From bodyweight to a loaded set there is no baseline to divide by: count it as a full doubling.
+    val gain = if (thenE <= 0.0) 1.0 else nowE / thenE - 1
     val exact = now.unit == unit && then.unit == unit
     val nowW = convert(now.weight, now.unit, unit)
     val thenW = convert(then.weight, then.unit, unit)
@@ -154,7 +159,7 @@ sealed interface Sentence {
     data class Done(val workoutId: String, val routineName: String, val duration: String) : Sentence
 }
 
-data class Dashboard(val sentence: Sentence, val weeks: List<WeekVolume>, val summaryEndsAt: Long?)
+data class Dashboard(val sentence: Sentence, val weeks: List<WeekVolume>, val summaryEndsAt: Long?, val prsThisWeek: Int = 0)
 
 private data class Timed(val workout: Workout, val original: Workout, val time: Long)
 private data class Ranked(val slide: Slide, val gain: Double)
@@ -176,17 +181,18 @@ fun buildDashboard(workouts: List<Workout>, userId: String, exerciseNames: Map<S
         return id
     }
     val weeks = weeklyVolume(own, now)
+    val prs = countPrs(own, now)
     val latest = own.last()
     if (now - latest.time <= SUMMARY_MS) {
-        return Dashboard(summary(own, ::nameOf, unit), weeks, latest.time + SUMMARY_MS)
+        return Dashboard(summary(own, ::nameOf, unit), weeks, latest.time + SUMMARY_MS, prs)
     }
     if (own.size < 2) return null
-    val sentence = trend(own, ::nameOf, unit, now)
-    if (sentence is Sentence.Improving) return Dashboard(sentence, weeks, null)
+    val sentence = trend(own, ::nameOf, unit, now, prs)
+    if (sentence is Sentence.Improving) return Dashboard(sentence, weeks, null, prs)
     val recap = lastRecap(own, ::nameOf, unit)
-    if (recap is Sentence.Finished) return Dashboard(recap.copy(duration = "", kept = true), weeks, null)
-    if (sentence != null) return Dashboard(sentence, weeks, null)
-    if (recap is Sentence.Matched) return Dashboard(recap.copy(duration = "", kept = true), weeks, null)
+    if (recap is Sentence.Finished) return Dashboard(recap.copy(duration = "", kept = true), weeks, null, prs)
+    if (sentence != null) return Dashboard(sentence, weeks, null, prs)
+    if (recap is Sentence.Matched) return Dashboard(recap.copy(duration = "", kept = true), weeks, null, prs)
     return null
 }
 
@@ -231,7 +237,7 @@ private fun summary(own: List<Timed>, nameOf: (String) -> String, unit: WeightUn
     return Sentence.Done(id, routineName, duration)
 }
 
-private fun trend(own: List<Timed>, nameOf: (String) -> String, unit: WeightUnit, now: Long): Sentence? {
+private fun trend(own: List<Timed>, nameOf: (String) -> String, unit: WeightUnit, now: Long, prs: Int): Sentence? {
     val latest = own.last()
     val sinceLatest = daysBetween(latest.time, now)
     if (sinceLatest >= BREAK_DAYS) return Sentence.Break(agoLabel(sinceLatest))
@@ -252,7 +258,7 @@ private fun trend(own: List<Timed>, nameOf: (String) -> String, unit: WeightUnit
         toSlide(eid, nameOf(eid), compareBestIn(n, t, baseW, eid, unit), "since", since)?.let { ranked += it }
     }
     val monthWorkouts = own.count { val d = localDateOf(it.time); d.year == today.year && d.month == today.month }
-    if (ranked.isNotEmpty()) return Sentence.Improving(topSlides(ranked), countPrs(own, now), monthWorkouts)
+    if (ranked.isNotEmpty()) return Sentence.Improving(topSlides(ranked), prs, monthWorkouts)
     workoutsSinceBreak(own, now)?.let { return Sentence.Returning(it) }
     if (comparable > 0) return Sentence.Plateau(monthWorkouts)
     return null
@@ -280,15 +286,40 @@ fun countPrsThisWeek(workouts: List<Workout>, userId: String, now: Long): Int {
 
 private fun countPrs(own: List<Timed>, now: Long): Int {
     val weekStart = startOfWeek(localDateOf(now)).atStartOfDayIn(localZone).toEpochMilliseconds()
+    // One forward pass: the best set per lift over everything strictly earlier than the current
+    // workout's time. Workouts sharing a timestamp do not count against each other, so a group is
+    // judged against the running best first and folded into it afterwards.
+    val running = HashMap<String, BestSet>()
     var prs = 0
-    own.forEachIndexed { i, t ->
-        if (t.time < weekStart) return@forEachIndexed
-        val earlier = own.subList(0, i).filter { it.time < t.time }.map { it.workout }
-        for (eid in exerciseIds(listOf(t))) {
-            val best = bestSetIn(listOf(t.workout), eid, Int.MAX_VALUE)
-            val prior = bestSetIn(earlier, eid, Int.MAX_VALUE)
-            if (best != null && prior != null && isRecord(best, prior)) prs++
+    var i = 0
+    while (i < own.size) {
+        var j = i
+        while (j < own.size && own[j].time == own[i].time) j++
+        val group = HashMap<String, BestSet>()
+        for (k in i until j) {
+            val t = own[k]
+            val perLift = HashMap<String, BestSet>()
+            for (entry in t.workout.entries) {
+                for (set in workingSets(entry)) {
+                    val kg = toKg(set.weight, set.unit)
+                    val b = perLift[entry.exerciseId]
+                    if (b == null || kg > b.weightKg || (kg == b.weightKg && set.reps > b.reps)) perLift[entry.exerciseId] = BestSet(set.weight, set.unit, kg, set.reps, t.time)
+                }
+            }
+            for ((eid, best) in perLift) {
+                if (t.time >= weekStart) {
+                    val prior = running[eid]
+                    if (prior != null && isRecord(best, prior)) prs++
+                }
+                val g = group[eid]
+                if (g == null || best.weightKg > g.weightKg || (best.weightKg == g.weightKg && best.reps > g.reps)) group[eid] = best
+            }
         }
+        for ((eid, best) in group) {
+            val r = running[eid]
+            if (r == null || best.weightKg > r.weightKg || (best.weightKg == r.weightKg && best.reps > r.reps)) running[eid] = best
+        }
+        i = j
     }
     return prs
 }
@@ -302,7 +333,10 @@ private fun weeklyVolume(own: List<Timed>, now: Long): List<WeekVolume> {
     val count = minOf(WEEKS, first.daysUntil(current) / 7 + 1)
     val starts = (count - 1 downTo 0).map { current.minus(DatePeriod(days = 7 * it)) }
     val volume = DoubleArray(starts.size)
-    for (t in own) {
+    val windowStart = starts.first().atStartOfDayIn(localZone).toEpochMilliseconds()
+    // Oldest first: walk back from the newest and stop once past the 8-week window.
+    for (t in own.asReversed()) {
+        if (t.time < windowStart - 86_400_000L) break
         val idx = starts.indexOf(startOfWeek(localDateOf(t.time)))
         if (idx < 0) continue
         for (entry in t.workout.entries) for (set in workingSets(entry)) volume[idx] += toKg(set.weight, set.unit) * set.reps

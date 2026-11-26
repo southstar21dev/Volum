@@ -9,6 +9,9 @@
   },
   "homepage": "https://github.com/southstar21dev/Volum#readme",
   "private": true,
+  "scripts": {
+    "test:backend": "node --test backend/tests"
+  },
   "devDependencies": {
     "@semantic-release/exec": "^7.1.0",
     "@semantic-release/npm": "file:tools/semantic-release-npm-stub",

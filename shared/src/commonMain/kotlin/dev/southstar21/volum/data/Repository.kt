@@ -14,25 +14,38 @@ import dev.southstar21.volum.model.WorkoutEntry
 import dev.southstar21.volum.model.WorkoutStatus
 import dev.southstar21.volum.util.formatSeconds
 import dev.southstar21.volum.util.formatWeight
+import dev.southstar21.volum.util.isoOf
 import dev.southstar21.volum.util.newId
+import dev.southstar21.volum.util.nowMillis
 import dev.southstar21.volum.util.nowIso
 import dev.southstar21.volum.util.plural
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 
 /** Every local write: saved to the store, queued for PocketBase, and announced so sync runs soon. */
-class Repository(val store: LocalStore, val owner: String) {
+class Repository(
+    val store: LocalStore,
+    val owner: String,
+    /** The time (epoch ms) set edits are stamped with: the server's clock as best known, see [PocketBase.serverNowMillis]. */
+    private val stampClock: () -> Long = ::nowMillis,
+    /** Where workout transactions run off the calling thread; tests pass a test dispatcher. */
+    private val defaultDispatcher: CoroutineDispatcher = Dispatchers.Default,
+) {
     private val _writes = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     val writes: SharedFlow<Unit> = _writes
 
     private fun <T> payload(serializer: KSerializer<T>, value: T): JsonObject =
         VolumJson.encodeToJsonElement(serializer, value).jsonObject
 
-    private fun LocalStore.Tx.queue(collection: Collection, recordId: String, payload: JsonObject) {
-        replaceOutbox(collection.wire, recordId) { id -> OutboxItem(id = id, collection = collection.wire, recordId = recordId, payload = payload, createdAt = nowIso()) }
+    /** [isNew]: the record is being created, so the push can POST it without trying a PATCH first. */
+    private fun LocalStore.Tx.queue(collection: Collection, recordId: String, payload: JsonObject, isNew: Boolean = false) {
+        replaceOutbox(collection.wire, recordId) { id -> OutboxItem(id = id, collection = collection.wire, recordId = recordId, payload = payload, createdAt = nowIso(), isNew = isNew) }
     }
 
     private fun announce() { _writes.tryEmit(Unit) }
@@ -56,7 +69,7 @@ class Repository(val store: LocalStore, val owner: String) {
                 deleted = existing?.deleted ?: false,
             )
             putExercise(record)
-            queue(Collection.Exercises, record.id, payload(Exercise.serializer(), record.copy(updated = null)))
+            queue(Collection.Exercises, record.id, payload(Exercise.serializer(), record.copy(updated = null)), isNew = existing == null)
             record
         }
         if (record.owner == owner) announce()
@@ -66,11 +79,12 @@ class Repository(val store: LocalStore, val owner: String) {
     /**
      * Renames one of the user's exercises and every item of the user's routines that points at it:
      * routine items carry their own copy of the name, and a new session takes the name from there.
-     * A partner's exercise or routine is never written (see [saveExercise]).
+     * A partner's exercise or routine is never written (see [saveExercise]). Returns null when the
+     * exercise is gone (deleted on another device and synced meanwhile): nothing is written then.
      */
-    suspend fun renameExercise(id: String, name: String): Exercise {
+    suspend fun renameExercise(id: String, name: String): Exercise? {
         val record = store.transaction {
-            val existing = exercises[id] ?: error("no exercise $id")
+            val existing = exercises[id] ?: return@transaction null
             if (existing.owner != owner) return@transaction existing
             // Rebuilt without the server's `updated`, like every local save: a record without it is one
             // a damaged outbox re-queues (LocalStore.requeueUnsynced).
@@ -87,7 +101,7 @@ class Repository(val store: LocalStore, val owner: String) {
                 }
             record
         }
-        if (record.owner == owner) announce()
+        if (record != null && record.owner == owner) announce()
         return record
     }
 
@@ -130,7 +144,7 @@ class Repository(val store: LocalStore, val owner: String) {
                 deleted = existing?.deleted ?: false,
             )
             putRoutine(record)
-            queue(Collection.Routines, record.id, payload(Routine.serializer(), record.copy(updated = null)))
+            queue(Collection.Routines, record.id, payload(Routine.serializer(), record.copy(updated = null)), isNew = existing == null)
             record
         }
         if (record.owner == owner) announce()
@@ -163,35 +177,68 @@ class Repository(val store: LocalStore, val owner: String) {
         entries: List<WorkoutEntry>,
         basis: List<WorkoutEntry>? = null,
     ): Workout {
-        val record = store.transaction {
-            val existing = id?.let { workouts[it] }
-            val now = nowIso()
-            // [entries] is an edit of [basis], the copy the screen showed. A sync may have brought a
-            // partner's sets in since; they aren't the user's removals, so the edit is replayed onto
-            // the stored entries instead of replacing them.
-            val entries = if (existing != null && basis != null) rebaseEntries(basis, existing.entries, entries) else entries
-            // While a partner can edit the workout, what the owner removes is remembered like a
-            // partner's removals, so a merge with a server copy that still has it doesn't bring it back.
-            val active = existing?.takeIf { it.status == WorkoutStatus.Active && !it.deleted }
-            val record = Workout(
-                id = existing?.id ?: id ?: newId(),
-                owner = owner,
-                routineId = routineId ?: existing?.routineId,
-                routineName = routineName.trim().take(MAX_ROUTINE_NAME),
-                startedAt = startedAt ?: existing?.startedAt ?: now,
-                finishedAt = finishedAt ?: existing?.finishedAt,
-                status = status ?: existing?.status ?: WorkoutStatus.Active,
-                entries = stampChangedSets(existing?.entries, if (active != null) withRemovedSets(active.entries, entries) else entries, now),
-                removedEntryIds = if (active != null) removedEntries(active, entries) else existing?.removedEntryIds,
-                updatedAt = now,
-                deleted = existing?.deleted ?: false,
-            )
-            putWorkout(record)
-            queue(Collection.Workouts, record.id, payload(Workout.serializer(), record.copy(updated = null)))
-            record
+        // Rebasing, stamping and encoding a big workout is CPU work: the whole transaction (taking its
+        // lock included) runs off the calling thread. It is still one transaction, so edits stay serial.
+        val record = withContext(defaultDispatcher) {
+            store.transaction { writeWorkout(id, routineId, routineName, startedAt, finishedAt, status, entries, basis) }
         }
         announce()
         return record
+    }
+
+    private fun LocalStore.Tx.writeWorkout(
+        id: String?,
+        routineId: String?,
+        routineName: String,
+        startedAt: String?,
+        finishedAt: String?,
+        status: WorkoutStatus?,
+        entries: List<WorkoutEntry>,
+        basis: List<WorkoutEntry>?,
+    ): Workout {
+        val existing = id?.let { workouts[it] }
+        val now = nowIso()
+        // [entries] is an edit of [basis], the copy the screen showed. A sync may have brought a
+        // partner's sets in since; they aren't the user's removals, so the edit is replayed onto
+        // the stored entries instead of replacing them.
+        val entries = if (existing != null && basis != null) rebaseEntries(basis, existing.entries, entries) else entries
+        // While a partner can edit the workout, what the owner removes is remembered like a
+        // partner's removals, so a merge with a server copy that still has it doesn't bring it back.
+        val active = existing?.takeIf { it.status == WorkoutStatus.Active && !it.deleted }
+        val record = Workout(
+            id = existing?.id ?: id ?: newId(),
+            owner = owner,
+            routineId = routineId ?: existing?.routineId,
+            routineName = routineName.trim().take(MAX_ROUTINE_NAME),
+            startedAt = startedAt ?: existing?.startedAt ?: now,
+            finishedAt = finishedAt ?: existing?.finishedAt,
+            status = status ?: existing?.status ?: WorkoutStatus.Active,
+            entries = stampChangedSets(existing?.entries, if (active != null) withRemovedSets(active.entries, entries) else entries, isoOf(stampClock())),
+            removedEntryIds = if (active != null) removedEntries(active, entries) else existing?.removedEntryIds,
+            updatedAt = now,
+            deleted = existing?.deleted ?: false,
+        )
+        putWorkout(record)
+        queue(Collection.Workouts, record.id, payload(Workout.serializer(), record.copy(updated = null)), isNew = existing == null)
+        return record
+    }
+
+    /**
+     * Applies [change] to one set of a stored workout, inside the store transaction so it reads the
+     * set as it is right now: quick taps on a nudge button each build on the one before, where a set
+     * captured by the screen would make them overwrite each other. Does nothing if the workout or set is gone.
+     */
+    suspend fun mutateSet(workoutId: String, entryId: String, setId: String, change: (SetEntry) -> SetEntry) {
+        val saved = withContext(defaultDispatcher) { store.transaction {
+            val existing = workouts[workoutId] ?: return@transaction false
+            val next = existing.entries.map { e ->
+                if (e.id == entryId) e.copy(sets = e.sets.map { if (it.id == setId) change(it) else it }) else e
+            }
+            if (next == existing.entries) return@transaction false
+            writeWorkout(workoutId, null, existing.routineName, null, null, null, next, existing.entries)
+            true
+        } }
+        if (saved) announce()
     }
 
     /** [existing]'s removed exercises plus those missing from [entries]. */

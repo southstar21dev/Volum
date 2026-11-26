@@ -167,9 +167,65 @@ class SyncTest {
 
     // ---- Push -------------------------------------------------------------------------------
 
+    @Test fun aRecordCreatedHereIsPostedWithoutAPatchFirst() = runTest {
+        val rig = Rig(this)
+        val exercise = rig.repo.saveExercise(name = "Bench")
+        assertTrue(rig.store.outbox.value.single().isNew)
+
+        rig.sync.syncNow()
+
+        val pushes = rig.server.pushes()
+        assertEquals(listOf(HttpMethod.Post), pushes.map { it.method })
+        assertEquals(exercise.id, pushes.single().body?.get("id")?.jsonPrimitive?.content)
+        assertTrue(rig.store.outbox.value.isEmpty())
+    }
+
+    @Test fun anEditBeforeTheFirstPushStaysACreateAndALaterOneIsAnUpdate() = runTest {
+        val rig = Rig(this)
+        val exercise = rig.repo.saveExercise(name = "Bench")
+        rig.repo.saveExercise(id = exercise.id, name = "Bench press")
+        assertTrue(rig.store.outbox.value.single().isNew, "still not on the server")
+
+        rig.sync.syncNow()
+        rig.repo.saveExercise(id = exercise.id, name = "Bench press 2")
+        assertFalse(rig.store.outbox.value.single().isNew)
+    }
+
+    @Test fun aPostForARecordTheServerAlreadyHasFallsBackToPatch() = runTest {
+        val rig = Rig(this)
+        val exercise = rig.repo.saveExercise(name = "Bench")
+        rig.server.route = { r ->
+            if (r.method == HttpMethod.Post) FakePb.Reply.Json(400, """{"status":400,"message":"Failed to create record.","data":{"id":{"code":"validation_not_unique","message":"The value must be unique."}}}""") else null
+        }
+
+        rig.sync.syncNow()
+
+        assertEquals(listOf(HttpMethod.Post, HttpMethod.Patch), rig.server.pushes().map { it.method })
+        assertEquals(exercise.id, rig.server.pushes()[1].id)
+        assertTrue(rig.store.outbox.value.isEmpty())
+        assertEquals(SyncState.Synced, rig.sync.status.value.state)
+    }
+
+    @Test fun aPostRefusedForItsOwnReasonIsRejectedNotRetriedAsAPatchForever() = runTest {
+        val rig = Rig(this)
+        rig.repo.saveExercise(name = "Bench")
+        rig.server.route = { r ->
+            if (r.method == HttpMethod.Post) FakePb.Reply.Json(400, """{"status":400,"message":"Failed to create record.","data":{"name":{"code":"validation_required","message":"Cannot be blank."}}}""")
+            else FakePb.Reply.Json(404, """{"status":404,"message":"Not found.","data":{}}""")
+        }
+
+        rig.sync.syncNow()
+
+        val item = rig.store.outbox.value.single()
+        assertTrue(item.failed)
+        assertEquals("Failed to create record.", item.lastError)
+    }
+
     @Test fun pushCreatesTheRecordWhenTheServerHasNoneYet() = runTest {
         val rig = Rig(this)
         val exercise = rig.repo.saveExercise(name = "Bench")
+        // Queued as an update (a damaged outbox re-queues without the marker): the 404 leads to a create.
+        rig.store.transaction { updateOutbox { list -> list.map { it.copy(isNew = false) } } }
         rig.server.route = { r -> if (r.method == HttpMethod.Patch) FakePb.Reply.Json(404, """{"status":404,"message":"Not found.","data":{}}""") else null }
 
         rig.sync.syncNow()
@@ -188,7 +244,7 @@ class SyncTest {
         val rig = Rig(this)
         rig.repo.saveExercise(name = "Bench")
         rig.server.route = { r ->
-            if (r.method == HttpMethod.Patch) {
+            if (r.isPush()) {
                 FakePb.Reply.Json(400, """{"status":400,"message":"Failed to update record.","data":{"name":{"code":"validation_required","message":"Cannot be blank."}}}""")
             } else {
                 null
@@ -207,12 +263,13 @@ class SyncTest {
         assertEquals(listOf(1, 1, 1), listOf("exercises", "routines", "workouts").map { rig.server.lists(it).size })
 
         rig.sync.syncNow()
-        assertEquals(1, rig.server.pushes().size, "a failed item is not pushed again on its own")
+        // A POST refused with 400 is retried once as a PATCH (the record may exist already); both refused.
+        assertEquals(2, rig.server.pushes().size, "a failed item is not pushed again on its own")
         assertEquals(SyncProblem.Rejected, rig.sync.status.value.problem)
 
         rig.server.route = { null }
         rig.sync.retryNow()
-        assertEquals(2, rig.server.pushes().size)
+        assertEquals(3, rig.server.pushes().size)
         assertTrue(rig.store.outbox.value.isEmpty())
         assertEquals(SyncState.Synced, rig.sync.status.value.state)
     }
@@ -222,7 +279,7 @@ class SyncTest {
         rig.repo.saveExercise(name = "Bench")
         val replies = ArrayDeque(listOf(429, 408))
         rig.server.route = { r ->
-            if (r.method == HttpMethod.Patch) replies.removeFirstOrNull()?.let { FakePb.Reply.Json(it, """{"status":$it,"message":"Slow down.","data":{}}""") } else null
+            if (r.isPush()) replies.removeFirstOrNull()?.let { FakePb.Reply.Json(it, """{"status":$it,"message":"Slow down.","data":{}}""") } else null
         }
 
         rig.sync.syncNow()
@@ -243,7 +300,7 @@ class SyncTest {
     @Test fun expiredSessionPausesSyncAndKeepsTheOutbox() = runTest {
         val rig = Rig(this)
         rig.repo.saveExercise(name = "Bench")
-        rig.server.route = { r -> if (r.method == HttpMethod.Patch) FakePb.Reply.Json(401, """{"status":401,"message":"Unauthorized.","data":{}}""") else null }
+        rig.server.route = { r -> if (r.isPush()) FakePb.Reply.Json(401, """{"status":401,"message":"Unauthorized.","data":{}}""") else null }
 
         rig.sync.syncNow()
 

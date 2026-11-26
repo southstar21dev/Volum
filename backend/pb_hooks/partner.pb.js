@@ -1,7 +1,12 @@
+// Transaction callbacks below only record an outcome: an error thrown inside runInTransaction can
+// lose its HTTP status crossing back from Go, so the route throws it afterwards. Handlers run in
+// their own runtimes and see no top-level values, so constants live inside them.
+
 routerAdd(
   "GET",
   "/api/volum/partner",
   (e) => {
+    const { findUser } = require(`${__hooks}/partner_util.js`);
     const toUser = (record) => ({
       id: record.id,
       name: record.getString("name"),
@@ -9,17 +14,11 @@ routerAdd(
       avatar: record.getString("avatar"),
     });
 
-    const me = e.app.findRecordById("users", e.auth.id);
-    const partnerId = me.getString("partner");
-
-    let partner = null;
-    if (partnerId) {
-      try {
-        partner = e.app.findRecordById("users", partnerId);
-      } catch (_) {
-        partner = null;
-      }
+    const me = findUser(e.app, e.auth.id);
+    if (!me) {
+      throw new ForbiddenError("Account not found");
     }
+    const partner = findUser(e.app, me.getString("partner"));
 
     let activeWorkout = null;
     if (partner) {
@@ -40,18 +39,27 @@ routerAdd(
       }
     }
 
-    const incoming = e.app
-      .findRecordsByFilter("pair_requests", "target = {:id}", "", 100, 0, { id: e.auth.id })
-      .map((request) => ({
-        id: request.id,
-        from: toUser(e.app.findRecordById("users", request.getString("requester"))),
-      }));
+    const incomingRows = e.app.findRecordsByFilter("pair_requests", "target = {:id}", "", 100, 0, { id: e.auth.id });
+    const outgoingRows = e.app.findRecordsByFilter("pair_requests", "requester = {:id}", "", 100, 0, { id: e.auth.id });
 
-    const outgoing = e.app
-      .findRecordsByFilter("pair_requests", "requester = {:id}", "", 100, 0, { id: e.auth.id })
-      .map((request) => ({
-        id: request.id,
-        to: toUser(e.app.findRecordById("users", request.getString("target"))),
+    // One query for everyone referenced, instead of one per request.
+    const ids = [];
+    for (const row of incomingRows) ids.push(row.getString("requester"));
+    for (const row of outgoingRows) ids.push(row.getString("target"));
+    const users = {};
+    if (ids.length > 0) {
+      for (const user of e.app.findRecordsByIds("users", ids)) users[user.id] = user;
+    }
+
+    const incoming = incomingRows
+      .filter((row) => users[row.getString("requester")])
+      .map((row) => ({ id: row.id, from: toUser(users[row.getString("requester")]) }));
+    // Someone who has not accepted yet is shown by the email you typed only: no id, name or photo.
+    const outgoing = outgoingRows
+      .filter((row) => users[row.getString("target")])
+      .map((row) => ({
+        id: row.id,
+        to: { id: "", name: "", email: users[row.getString("target")].email(), avatar: "" },
       }));
 
     return e.json(200, {
@@ -68,62 +76,76 @@ routerAdd(
   "POST",
   "/api/volum/partner/request",
   (e) => {
-    const toUser = (record) => ({
-      id: record.id,
-      name: record.getString("name"),
-      email: record.email(),
-      avatar: record.getString("avatar"),
-    });
-
+    const { findOne } = require(`${__hooks}/partner_util.js`);
+    const MAX_OUTGOING_REQUESTS = 10;
     const body = e.requestInfo().body || {};
     const email = String(body.email || "").trim().toLowerCase();
     if (!email) {
       throw new BadRequestError("Email is required");
     }
 
-    let target;
-    try {
-      target = e.app.findAuthRecordByEmail("users", email);
-    } catch (_) {
-      throw new BadRequestError("No user found with that email");
-    }
+    let outcome = "ok";
+    let requestId = "";
+    e.app.runInTransaction((txApp) => {
+      let target;
+      try {
+        target = txApp.findAuthRecordByEmail("users", email);
+      } catch (_) {
+        outcome = "nouser";
+        return;
+      }
+      if (target.id === e.auth.id) {
+        outcome = "self";
+        return;
+      }
 
-    if (target.id === e.auth.id) {
-      throw new BadRequestError("You cannot pair with yourself");
-    }
+      let me;
+      try {
+        me = txApp.findRecordById("users", e.auth.id);
+      } catch (_) {
+        outcome = "nouser";
+        return;
+      }
+      if (me.getString("partner")) {
+        outcome = "mepaired";
+        return;
+      }
+      if (target.getString("partner")) {
+        outcome = "targetpaired";
+        return;
+      }
 
-    const me = e.app.findRecordById("users", e.auth.id);
-    if (me.getString("partner")) {
-      throw new BadRequestError("You are already paired. Unpair first");
-    }
-    if (target.getString("partner")) {
-      throw new BadRequestError("That account is already paired");
-    }
+      const mineToThem = findOne(txApp, "pair_requests", "requester = {:me} && target = {:them}", {
+        me: me.id,
+        them: target.id,
+      });
+      if (mineToThem) {
+        requestId = mineToThem.id;
+        return;
+      }
+      if (findOne(txApp, "pair_requests", "requester = {:them} && target = {:me}", { me: me.id, them: target.id })) {
+        outcome = "theyasked";
+        return;
+      }
+      if (txApp.countRecords("pair_requests", $dbx.hashExp({ requester: me.id })) >= MAX_OUTGOING_REQUESTS) {
+        outcome = "toomany";
+        return;
+      }
 
-    const outgoing = e.app.findRecordsByFilter("pair_requests", "requester = {:id}", "", 100, 0, {
-      id: e.auth.id,
+      const request = new Record(txApp.findCollectionByNameOrId("pair_requests"));
+      request.set("requester", me.id);
+      request.set("target", target.id);
+      txApp.save(request);
+      requestId = request.id;
     });
-    const incoming = e.app.findRecordsByFilter("pair_requests", "target = {:id}", "", 100, 0, {
-      id: e.auth.id,
-    });
 
-    const mineToThem = outgoing.find((row) => row.getString("target") === target.id);
-    if (mineToThem) {
-      return e.json(200, { id: mineToThem.id, to: toUser(target) });
-    }
-
-    const theirsToMe = incoming.find((row) => row.getString("requester") === target.id);
-    if (theirsToMe) {
-      throw new BadRequestError("They already sent you a request. Accept theirs instead");
-    }
-
-    const collection = e.app.findCollectionByNameOrId("pair_requests");
-    const request = new Record(collection);
-    request.set("requester", e.auth.id);
-    request.set("target", target.id);
-    e.app.save(request);
-
-    return e.json(200, { id: request.id, to: toUser(target) });
+    if (outcome === "nouser") throw new BadRequestError("No user found with that email");
+    if (outcome === "self") throw new BadRequestError("You cannot pair with yourself");
+    if (outcome === "mepaired") throw new BadRequestError("You are already paired. Unpair first");
+    if (outcome === "targetpaired") throw new BadRequestError("That account is already paired");
+    if (outcome === "theyasked") throw new BadRequestError("They already sent you a request. Accept theirs instead");
+    if (outcome === "toomany") throw new BadRequestError("Too many pending requests. Cancel one first");
+    return e.json(200, { id: requestId, to: { id: "", name: "", email, avatar: "" } });
   },
   $apis.requireAuth(),
 );
@@ -132,6 +154,7 @@ routerAdd(
   "POST",
   "/api/volum/partner/accept",
   (e) => {
+    const { findOne } = require(`${__hooks}/partner_util.js`);
     const toUser = (record) => ({
       id: record.id,
       name: record.getString("name"),
@@ -145,48 +168,62 @@ routerAdd(
       throw new BadRequestError("id is required");
     }
 
-    let request;
-    try {
-      request = e.app.findRecordById("pair_requests", id);
-    } catch (_) {
-      throw new NotFoundError("Request not found");
-    }
-    if (request.getString("target") !== e.auth.id) {
-      throw new ForbiddenError("Only the request recipient can accept it");
-    }
-
-    const me = e.app.findRecordById("users", e.auth.id);
-    const requester = e.app.findRecordById("users", request.getString("requester"));
-    if (me.getString("partner")) {
-      throw new BadRequestError("You are already paired. Unpair first");
-    }
-    if (requester.getString("partner")) {
-      throw new BadRequestError("That account is already paired");
-    }
-
-    me.set("partner", requester.id);
-    requester.set("partner", me.id);
-    e.app.save(me);
-    e.app.save(requester);
-
-    const outgoing = e.app.findRecordsByFilter("pair_requests", "requester = {:id}", "", 100, 0, {
-      id: me.id,
-    });
-    const incoming = e.app.findRecordsByFilter("pair_requests", "target = {:id}", "", 100, 0, {
-      id: me.id,
-    });
-    for (const row of outgoing) {
-      if (row.getString("target") === requester.id) {
-        e.app.delete(row);
+    // Everything is read again inside the transaction, so two accepts (or an accept and an
+    // unpair) can't both pass the "not paired" checks and leave one-sided partner pointers.
+    let outcome = "ok";
+    let partnerRecord = null;
+    e.app.runInTransaction((txApp) => {
+      let request;
+      try {
+        request = txApp.findRecordById("pair_requests", id);
+      } catch (_) {
+        outcome = "notfound";
+        return;
       }
-    }
-    for (const row of incoming) {
-      if (row.getString("requester") === requester.id) {
-        e.app.delete(row);
+      if (request.getString("target") !== e.auth.id) {
+        outcome = "forbidden";
+        return;
       }
-    }
 
-    return e.json(200, { partner: toUser(requester) });
+      let me;
+      let requester;
+      try {
+        me = txApp.findRecordById("users", e.auth.id);
+        requester = txApp.findRecordById("users", request.getString("requester"));
+      } catch (_) {
+        outcome = "notfound";
+        return;
+      }
+      if (me.getString("partner")) {
+        outcome = "mepaired";
+        return;
+      }
+      if (requester.getString("partner")) {
+        outcome = "targetpaired";
+        return;
+      }
+
+      me.set("partner", requester.id);
+      requester.set("partner", me.id);
+      txApp.save(me);
+      txApp.save(requester);
+
+      txApp.delete(request);
+      const reverse = findOne(txApp, "pair_requests", "requester = {:me} && target = {:them}", {
+        me: me.id,
+        them: requester.id,
+      });
+      if (reverse) {
+        txApp.delete(reverse);
+      }
+      partnerRecord = requester;
+    });
+
+    if (outcome === "notfound") throw new NotFoundError("Request not found");
+    if (outcome === "forbidden") throw new ForbiddenError("Only the request recipient can accept it");
+    if (outcome === "mepaired") throw new BadRequestError("You are already paired. Unpair first");
+    if (outcome === "targetpaired") throw new BadRequestError("That account is already paired");
+    return e.json(200, { partner: toUser(partnerRecord) });
   },
   $apis.requireAuth(),
 );
@@ -247,56 +284,50 @@ routerAdd(
   "DELETE",
   "/api/volum/partner",
   (e) => {
-    const me = e.app.findRecordById("users", e.auth.id);
-    const partnerId = me.getString("partner");
-    if (partnerId) {
+    const { findOne } = require(`${__hooks}/partner_util.js`);
+    e.app.runInTransaction((txApp) => {
+      const me = txApp.findRecordById("users", e.auth.id);
+      const partnerId = me.getString("partner");
+      if (!partnerId) return;
+
       let partner = null;
       try {
-        partner = e.app.findRecordById("users", partnerId);
+        partner = txApp.findRecordById("users", partnerId);
       } catch (_) {
         partner = null;
       }
       me.set("partner", "");
-      e.app.save(me);
+      txApp.save(me);
       if (partner && partner.getString("partner") === me.id) {
         partner.set("partner", "");
-        e.app.save(partner);
+        txApp.save(partner);
       }
 
-      const outgoing = e.app.findRecordsByFilter("pair_requests", "requester = {:id}", "", 100, 0, {
-        id: me.id,
-      });
-      const incoming = e.app.findRecordsByFilter("pair_requests", "target = {:id}", "", 100, 0, {
-        id: me.id,
-      });
-      for (const row of outgoing) {
-        if (row.getString("target") === partnerId) {
-          e.app.delete(row);
-        }
+      // Any request left between the two of them, in either direction.
+      for (const [from, to] of [[me.id, partnerId], [partnerId, me.id]]) {
+        const row = findOne(txApp, "pair_requests", "requester = {:from} && target = {:to}", { from, to });
+        if (row) txApp.delete(row);
       }
-      for (const row of incoming) {
-        if (row.getString("requester") === partnerId) {
-          e.app.delete(row);
-        }
-      }
-    }
+    });
     return e.noContent(204);
   },
   $apis.requireAuth(),
 );
 
-// Applies one set mutation to an active workout inside a transaction, so a
-// partner's edit can't race the owner's sync and silently drop either change.
+// Applies a partner's mutation (or, as `mutations`, a batch of up to 50 applied in order, all or
+// nothing) to an active workout inside a transaction, so an edit can't race the owner's sync and
+// silently drop either change.
 routerAdd(
   "POST",
   "/api/volum/partner/workout/{id}/mutate",
   (e) => {
-    const { applyMutation } = require(`${__hooks}/workout_merge.js`);
+    const { parseList, findUser, mutationsOf, applyMutations } = require(`${__hooks}/partner_util.js`);
     const id = e.request.pathValue("id");
-    const body = e.requestInfo().body || {};
+    const mutations = mutationsOf(e.requestInfo().body);
+    if (!mutations) {
+      throw new BadRequestError("Invalid change");
+    }
 
-    // Errors thrown inside the transaction callback may lose their HTTP
-    // status crossing back from Go, so the callback only reports an outcome.
     let outcome = "ok";
     let saved = null;
     e.app.runInTransaction((txApp) => {
@@ -314,27 +345,31 @@ routerAdd(
 
       const ownerId = workout.getString("owner");
       if (ownerId !== e.auth.id) {
-        const me = txApp.findRecordById("users", e.auth.id);
-        const owner = txApp.findRecordById("users", ownerId);
-        if (me.getString("partner") !== ownerId || owner.getString("partner") !== e.auth.id) {
+        const me = findUser(txApp, e.auth.id);
+        const owner = findUser(txApp, ownerId);
+        if (!me || !owner || me.getString("partner") !== ownerId || owner.getString("partner") !== e.auth.id) {
           outcome = "forbidden";
           return;
         }
       }
 
       const now = new Date().toISOString();
-      const entries = applyMutation(JSON.parse(workout.getString("entries") || "[]"), body.mutation, now);
-      if (!entries) {
+      const result = applyMutations(
+        parseList(workout.getString("entries")),
+        parseList(workout.getString("removedEntryIds")),
+        mutations,
+        now,
+      );
+      if (!result) {
         outcome = "invalid";
         return;
       }
-      workout.set("entries", entries);
-      if (body.mutation.kind === "removeEntry") {
-        const removed = JSON.parse(workout.getString("removedEntryIds") || "[]") || [];
-        workout.set("removedEntryIds", removed.concat([body.mutation.entryId]));
+      if (result.changed) {
+        workout.set("entries", result.entries);
+        if (result.removedEntryIds !== null) workout.set("removedEntryIds", result.removedEntryIds);
+        workout.set("updatedAt", now);
+        txApp.save(workout);
       }
-      workout.set("updatedAt", now);
-      txApp.save(workout);
       saved = workout;
     });
 
@@ -366,15 +401,28 @@ onRecordUpdateRequest(
   "users",
 );
 
+// The owner never changes through the API (the update rules say so too): put the stored one back.
+onRecordUpdateRequest(
+  (e) => {
+    if (!e.hasSuperuserAuth()) {
+      e.record.set("owner", e.record.original().getString("owner"));
+    }
+    e.next();
+  },
+  "exercises",
+  "routines",
+);
+
 onRecordUpdateRequest(
   (e) => {
     if (e.hasSuperuserAuth()) {
       return e.next();
     }
+    const { parseList } = require(`${__hooks}/partner_util.js`);
     const original = e.record.original();
     const owner = original.getString("owner");
+    e.record.set("owner", owner);
     if (owner && e.auth && e.auth.id !== owner) {
-      e.record.set("owner", owner);
       e.record.set("routineId", original.getString("routineId"));
       e.record.set("routineName", original.getString("routineName"));
       e.record.set("startedAt", original.getString("startedAt"));
@@ -393,14 +441,10 @@ onRecordUpdateRequest(
     // apps don't send `syncBase` and keep the old behaviour.
     if (original.getString("status") === "active") {
       const { mergeEntries } = require(`${__hooks}/workout_merge.js`);
-      const stored = JSON.parse(original.getString("entries") || "[]");
-      const incoming = JSON.parse(e.record.getString("entries") || "[]");
+      const stored = parseList(original.getString("entries"));
+      const incoming = parseList(e.record.getString("entries"));
       const removed = Array.from(
-        new Set(
-          (JSON.parse(original.getString("removedEntryIds") || "[]") || []).concat(
-            JSON.parse(e.record.getString("removedEntryIds") || "[]") || [],
-          ),
-        ),
+        new Set(parseList(original.getString("removedEntryIds")).concat(parseList(e.record.getString("removedEntryIds")))),
       );
       const syncBase = (e.requestInfo().body || {}).syncBase;
       const snapshotAt =

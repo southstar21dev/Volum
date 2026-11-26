@@ -40,7 +40,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import dev.southstar21.volum.data.PbException
+import dev.southstar21.volum.data.actionErrorMessage
 import dev.southstar21.volum.data.SyncProblem
 import dev.southstar21.volum.data.SyncState
 import dev.southstar21.volum.data.partnerErrorMessage
@@ -116,8 +116,9 @@ fun ProfileScreen() {
     var photoSheet by remember { mutableStateOf(false) }
     var removePhoto by remember { mutableStateOf(false) }
     // The picked photo while it's being cropped; not saved across process death (it can be megabytes).
-    var pickedPhoto by remember { mutableStateOf<ByteArray?>(null) }
+    var pickedPhoto by remember { mutableStateOf<ImageBitmap?>(null) }
     var savingPhoto by remember { mutableStateOf(false) }
+    var removingPhoto by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
     var photoError by remember { mutableStateOf<String?>(null) }
     val pickPhoto = rememberPhotoPicker(
@@ -126,7 +127,7 @@ fun ProfileScreen() {
     )
 
     fun savePhoto(cropped: ImageBitmap) {
-        if (savingPhoto) return
+        if (savingPhoto || removingPhoto) return
         savingPhoto = true
         saveError = null
         scope.launch {
@@ -136,10 +137,8 @@ fun ProfileScreen() {
                 pickedPhoto = null
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: PbException) {
-                saveError = if (e.status == 0) "You're offline. Try again once you're connected." else e.fieldMessage ?: "Couldn't save your photo. Try again."
             } catch (e: Exception) {
-                saveError = "Couldn't save your photo. Try again."
+                saveError = actionErrorMessage(e, "You're offline. Try again once you're connected.", "Couldn't save your photo. Try again.")
             } finally {
                 savingPhoto = false
             }
@@ -147,16 +146,18 @@ fun ProfileScreen() {
     }
 
     fun removeAvatar() {
+        if (removingPhoto || savingPhoto) return
+        removingPhoto = true
         photoError = null
         scope.launch {
             try {
                 app.removeAvatar()
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: PbException) {
-                photoError = if (e.status == 0) "You're offline. Try again once you're connected." else "Couldn't remove your photo. Try again."
             } catch (e: Exception) {
-                photoError = "Couldn't remove your photo. Try again."
+                photoError = actionErrorMessage(e, "You're offline. Try again once you're connected.", "Couldn't remove your photo. Try again.", serverText = false)
+            } finally {
+                removingPhoto = false
             }
         }
     }
@@ -172,10 +173,8 @@ fun ProfileScreen() {
                 session.repository.deletePartnerLocalData()
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: PbException) {
-                partnerError = partnerErrorMessage(e)
             } catch (e: Exception) {
-                partnerError = "Something went wrong"
+                partnerError = partnerErrorMessage(e)
             } finally {
                 unpairing = false
             }
@@ -293,8 +292,7 @@ fun ProfileScreen() {
             scope.launch {
                 try { app.setDisplayName(draft.trim()); editName = false; nameError = null }
                 catch (e: CancellationException) { throw e }
-                catch (e: PbException) { nameError = if (e.status == 0) "You're offline." else e.fieldMessage ?: "Couldn't save your name. Try again." }
-                catch (e: Exception) { nameError = "Couldn't save your name. Try again." }
+                catch (e: Exception) { nameError = actionErrorMessage(e, "You're offline.", "Couldn't save your name. Try again.") }
             }
         }
     }
@@ -410,12 +408,13 @@ fun PairPartnerScreen() {
     var error by remember { mutableStateOf<String?>(null) }
 
     fun run(block: suspend () -> Unit) {
+        // A second tap while a request is in flight would repeat it and fail with a spurious 404/400.
+        if (busy) return
         busy = true; error = null; message = null
         scope.launch {
             try { block() }
             catch (e: CancellationException) { throw e }
-            catch (e: PbException) { error = partnerErrorMessage(e) }
-            catch (e: Exception) { error = "Something went wrong" }
+            catch (e: Exception) { error = partnerErrorMessage(e) }
             finally { busy = false }
         }
     }
@@ -482,8 +481,8 @@ fun PairPartnerScreen() {
                     }
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        GlassButton("Decline", Modifier.weight(1f), height = 46.dp) { run { session.partner.decline(req.id) } }
-                        PrimaryButton("Accept", Modifier.weight(1f), height = 46.dp) { run { session.partner.accept(req.id); nav.pop() } }
+                        GlassButton("Decline", Modifier.weight(1f), height = 46.dp, enabled = !busy) { run { session.partner.decline(req.id) } }
+                        PrimaryButton("Accept", Modifier.weight(1f), height = 46.dp, enabled = !busy) { run { session.partner.accept(req.id); nav.pop() } }
                     }
                 }
             }

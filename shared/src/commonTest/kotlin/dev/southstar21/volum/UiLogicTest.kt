@@ -18,6 +18,9 @@ import dev.southstar21.volum.ui.routines.stepDown
 import dev.southstar21.volum.ui.routines.stepUp
 import dev.southstar21.volum.ui.session.Stopwatches
 import dev.southstar21.volum.ui.session.blankSet
+import dev.southstar21.volum.ui.session.clockLabel
+import dev.southstar21.volum.ui.session.heldMillis
+import dev.southstar21.volum.ui.session.heldSeconds
 import dev.southstar21.volum.ui.session.editableWeight
 import dev.southstar21.volum.ui.session.editedSet
 import dev.southstar21.volum.ui.session.elapsedMinutes
@@ -539,6 +542,20 @@ class UiLogicTest {
         assertEquals("61.24", editableWeight(61.235))
         assertEquals("0.05", editableWeight(0.05))
         assertEquals("100.1", editableWeight(100.1))
+    }
+
+    // ---- Hold clock -------------------------------------------------------------------------
+
+    @Test fun aHoldClockReadsAsMinutesAndSecondsAndNeverNegative() {
+        assertEquals("0:07", clockLabel(7))
+        assertEquals("1:32", clockLabel(92))
+        assertEquals("0:00", clockLabel(-5))
+    }
+
+    @Test fun aHoldThatRanWhileTheClockWasSetBackIsZeroNotNegative() {
+        assertEquals(7, heldSeconds(startedAt = 10_000, now = 17_900))
+        assertEquals(0, heldSeconds(startedAt = 10_000, now = 4_000))
+        assertEquals(0L, heldMillis(startedAt = 10_000, now = 9_999))
     }
 
     // ---- Weight nudges ----------------------------------------------------------------------

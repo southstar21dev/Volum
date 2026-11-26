@@ -137,6 +137,8 @@ data class OutboxItem(
     val attempts: Int = 0,
     val failed: Boolean = false,
     val lastError: String? = null,
+    /** The record was created on this device and may not exist on the server yet: pushed with a POST first. */
+    val isNew: Boolean = false,
 )
 
 @Serializable

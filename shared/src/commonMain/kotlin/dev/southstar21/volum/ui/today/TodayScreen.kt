@@ -65,7 +65,6 @@ import dev.southstar21.volum.model.Routine
 import dev.southstar21.volum.model.Workout
 import dev.southstar21.volum.progress.Sentence
 import dev.southstar21.volum.progress.buildDashboard
-import dev.southstar21.volum.progress.countPrsThisWeek
 import dev.southstar21.volum.ui.LocalApp
 import dev.southstar21.volum.ui.LocalDockPadding
 import dev.southstar21.volum.ui.LocalNav
@@ -83,6 +82,7 @@ import dev.southstar21.volum.ui.components.ActionSheet
 import dev.southstar21.volum.ui.components.Avatar
 import dev.southstar21.volum.ui.components.photoUrl
 import dev.southstar21.volum.ui.components.CircleButton
+import dev.southstar21.volum.ui.components.SmallCircleButton
 import dev.southstar21.volum.ui.components.ConfirmSheet
 import dev.southstar21.volum.ui.components.GlassCard
 import dev.southstar21.volum.ui.components.Mute
@@ -241,7 +241,7 @@ fun TodayScreen() {
         WeekStrip(ownWorkouts, now)
 
         dashboard?.weeks?.takeIf { it.size > 1 }?.let { weeks ->
-            val prs = rememberTicking(workouts, tick = now) { at -> countPrsThisWeek(workouts.values.toList(), user.id, at) }
+            val prs = dashboard.prsThisWeek
             val today = localDateOf(now)
             val month = remember(ownWorkouts, today) { ownWorkouts.count { it.finishedAt != null && localDateOf(parseTime(it.finishedAt)).let { d -> d.year == today.year && d.month == today.month } } }
             VolumeCard(weeks.map { it.start to it.volumeKg }, prs, month, prefs.unit)
@@ -558,20 +558,6 @@ private fun RoutineCard(routine: Routine, subtitle: String, highlight: Boolean, 
         }
         Spacer(Modifier.height(5.dp))
         Mute(if (active) "In progress" else subtitle, size = T.Caption, maxLines = 2)
-    }
-}
-
-/** A 38 dp glass circle inside a 48 dp touch target. */
-@Composable
-private fun SmallCircleButton(icon: ImageVector, contentDescription: String, iconSize: Dp, accent: Boolean = false, onClick: () -> Unit) {
-    val c = Volum.colors
-    Box(
-        Modifier.size(48.dp).tappable(haptic = accent, onClick = onClick).semantics { this.contentDescription = contentDescription },
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(Modifier.size(38.dp).then(if (accent) Modifier.accentGel(CircleShape) else Modifier.liquidGlass(CircleShape)), contentAlignment = Alignment.Center) {
-            Icon(icon, if (accent) c.onAccent else c.ink, size = iconSize)
-        }
     }
 }
 

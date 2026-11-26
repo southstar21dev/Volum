@@ -54,6 +54,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -94,6 +95,7 @@ private class AccountServer(scope: TestScope) {
 
     /** Replaces the default reply to a record request (lists from [lists], writes echoed). */
     var records: suspend (Req) -> Reply? = { null }
+    var partnerWorkout: suspend (Req) -> Reply? = { null }
 
     /** Holds a request for the pairing state until it returns. */
     var partnerGate: suspend () -> Unit = {}
@@ -150,7 +152,7 @@ private class AccountServer(scope: TestScope) {
             partnerGate()
             Reply(200, VolumJson.encodeToString(PartnerSnapshot.serializer(), partner))
         }
-        req.path.startsWith("/api/volum/partner/workout/") -> {
+        req.path.startsWith("/api/volum/partner/workout/") -> partnerWorkout(req) ?: run {
             val workout = Workout(id = "pw", owner = "partner", routineName = "Legs", startedAt = T0, updatedAt = T0, updated = PB_T0)
             Reply(200, VolumJson.encodeToString(Workout.serializer(), workout))
         }
@@ -207,6 +209,9 @@ class AppContainerTest {
             path.parent?.let { SystemFileSystem.createDirectories(it) }
             SystemFileSystem.sink(path).buffered().use { it.writeString(text) }
         }
+
+        /** exercises.json is a folder: the store can't read it, so the user's local data can't be opened. */
+        fun breakLocalData(userId: String) = write("users/$userId/exercises.json/x", "")
 
         fun exists(relative: String) = SystemFileSystem.exists(Path(root, relative))
 
@@ -296,6 +301,43 @@ class AppContainerTest {
     }
 
     // ---- Sign-in ----------------------------------------------------------------------------
+
+    @Test fun aSavedSignInWhoseLocalDataWontOpenLeavesNoOrphanedToken() = appTest { rig ->
+        rig.saveSignIn(alex, "t-alex")
+        rig.breakLocalData("ua")
+        val app = rig.start()
+        assertNull(app.user.value)
+        assertNull(app.session.value)
+        assertNull(app.pb.token, "nothing keeps refreshing a token the UI doesn't show")
+        assertNotNull(rig.secrets.values["auth"], "the saved sign-in is kept for the next launch")
+    }
+
+    @Test fun aLoginWhoseLocalDataWontOpenFailsWithoutLeavingTheTokenSet() = appTest { rig ->
+        rig.breakLocalData("ua")
+        val app = rig.start()
+        runCatching { app.login(alex.email, "pw") }.let { assertTrue(it.isFailure) }
+        assertNull(app.user.value)
+        assertNull(app.pb.token)
+    }
+
+    @Test fun theSessionsUserIsObservableAndChangesWithTheProfile() = appTest { rig ->
+        val app = rig.start()
+        app.login(alex.email, "pw")
+        val session = assertNotNull(app.session.value)
+        assertEquals(alex.id, session.userState.value.id)
+        session.updateUser(session.user.copy(name = "Renamed"))
+        assertEquals("Renamed", session.userState.value.name)
+        assertEquals("Renamed", session.user.name)
+    }
+
+    @Test fun closingTheContainerWritesPendingPrefs() = appTest { rig ->
+        val app = rig.start()
+        app.login(alex.email, "pw")
+        app.updatePrefs { it.copy(unit = WeightUnit.Lb) }
+        app.close()
+        val mine = assertNotNull(JsonFiles.read(Path(rig.root, "users/ua/prefs.json"), JsonObject.serializer()))
+        assertEquals("lb", mine["unit"]?.jsonPrimitive?.content)
+    }
 
     @Test fun aRefreshThatReturnsAfterASignOutAndANewSignInDoesNotBringTheOldOneBack() = appTest { rig ->
         rig.saveSignIn(alex, "old")
@@ -560,6 +602,38 @@ class AppContainerTest {
         assertEquals("drop", kept["tag"]?.jsonPrimitive?.contentOrNull)
         assertEquals("slow", kept["note"]?.jsonPrimitive?.contentOrNull)
         assertEquals("30", kept["seconds"]?.jsonPrimitive?.contentOrNull)
+    }
+
+    @Test fun aRelinkedExerciseGoesOutAsOneBatchRequest() = runTest {
+        val server = AccountServer(this)
+        val partner = PartnerRepository(server.pb, Path(SystemTemporaryDirectory, "volum-app-${newId()}"), backgroundScope)
+
+        partner.mutateAll("pw", listOf(
+            WorkoutMutation.UpdateEntry("e1", name = "Plank", timed = true),
+            WorkoutMutation.Set("e1", "s1", SetEntry(id = "s1", seconds = 30)),
+        ))
+
+        val request = server.log.value.single()
+        assertEquals(2, request.body!!.jsonObject.getValue("mutations").jsonArray.size)
+        assertEquals(null, request.body!!.jsonObject["mutation"])
+    }
+
+    @Test fun aServerThatDoesNotKnowBatchesGetsTheEditsOneByOneOnce() = runTest {
+        val server = AccountServer(this)
+        server.partnerWorkout = { req ->
+            val reply = AccountServer.Reply(400, """{"status":400,"message":"Invalid change","data":{}}""")
+            if (req.body!!.jsonObject.containsKey("mutations")) reply else null
+        }
+        val partner = PartnerRepository(server.pb, Path(SystemTemporaryDirectory, "volum-app-${newId()}"), backgroundScope)
+
+        val result = partner.mutateAll("pw", listOf(
+            WorkoutMutation.UpdateEntry("e1", name = "Plank", timed = true),
+            WorkoutMutation.Set("e1", "s1", SetEntry(id = "s1", seconds = 30)),
+        ))
+
+        assertEquals("pw", result?.id)
+        val bodies = server.log.value.map { it.body!!.jsonObject.keys.single() }
+        assertEquals(listOf("mutations", "mutation", "mutation"), bodies)
     }
 
     // ---- Profile photo ----------------------------------------------------------------------

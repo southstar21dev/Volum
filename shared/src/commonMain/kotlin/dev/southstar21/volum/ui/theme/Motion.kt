@@ -187,15 +187,7 @@ fun Modifier.popIn(delayMillis: Long = 0): Modifier {
     }
 }
 
-/**
- * Animates a number toward [target], counting up from zero on entrance. Reading the value recomposes the
- * caller on every frame of the count; prefer [animatedNumberState] or [AnimatedNumber], which keep that
- * to the scope that shows the number.
- */
-@Composable
-fun animatedNumber(target: Double): Double = animatedNumberState(target).value
-
-/** [animatedNumber] as state: read it only where the number is drawn, so only that scope recomposes. */
+/** Animates a number toward [target], counting up from zero on entrance. Read it only where the number is drawn, so only that scope recomposes. */
 @Composable
 fun animatedNumberState(target: Double): State<Double> {
     val entrance = LocalEntrance.current

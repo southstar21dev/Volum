@@ -23,6 +23,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
 import kotlinx.io.files.Path
@@ -145,6 +147,25 @@ class ContainerTest {
         partner.stop()
     }
 
+    @Test fun partnerPollPausesInTheBackgroundAndResumesWithAFreshFetch() = runTest {
+        val server = PartnerServer(this)
+        val partner = PartnerRepository(server.pb, tempDir(), backgroundScope)
+
+        partner.start()
+        testScheduler.runCurrent()
+        assertEquals(1, server.calls)
+
+        partner.setForeground(false)
+        testScheduler.advanceTimeBy(5 * 60_000L)
+        testScheduler.runCurrent()
+        assertEquals(1, server.calls, "no polling while the app is in the background")
+
+        partner.setForeground(true)
+        testScheduler.runCurrent()
+        assertEquals(2, server.calls, "coming back fetches at once")
+        partner.stop()
+    }
+
     // ---- Partner changes --------------------------------------------------------------------
 
     @Test fun partnerChangeIsReportedWhenGainedReplacedOrLostAndNotForOtherChanges() = runTest {
@@ -187,14 +208,14 @@ class ContainerTest {
             if (failCleanup) throw IOException("No space left on device")
         }
 
-        val first = PartnerRepository(server.pb, dir, backgroundScope, onChange)
+        val first = PartnerRepository(server.pb, dir, backgroundScope, onPartnerChanged = onChange)
         first.load()
         first.refresh()
         assertEquals("Something went wrong", first.error.value)
         assertFalse(SystemFileSystem.exists(Path(dir, "partner.json")), "the snapshot isn't saved before the cleanup succeeds")
 
         failCleanup = false
-        val next = PartnerRepository(server.pb, dir, backgroundScope, onChange)
+        val next = PartnerRepository(server.pb, dir, backgroundScope, onPartnerChanged = onChange)
         next.load()
         next.refresh()
         assertNull(next.error.value)

@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
+    alias(libs.plugins.detekt)
 }
 
 // The release workflow writes the version semantic-release chose into gradle.properties.
@@ -20,7 +21,8 @@ val appVersionCode: Int = run {
 }
 
 // The release key: keystore.properties locally, environment variables in the release workflow.
-// Without either, release builds are signed with the debug key (fine for your own phone).
+// Without either, a release build is left unsigned, unless -Pvolum.allowDebugSigning=true asks for
+// the debug key (fine for your own phone; never for something that gets published).
 val keystoreProperties = Properties().apply {
     rootProject.file("keystore.properties").takeIf { it.exists() }?.inputStream()?.use(::load)
 }
@@ -29,6 +31,7 @@ fun signingValue(property: String, environmentVariable: String): String? =
     keystoreProperties.getProperty(property) ?: providers.environmentVariable(environmentVariable).orNull
 
 val releaseKeystore: String? = signingValue("storeFile", "VOLUM_KEYSTORE_PATH")
+val allowDebugSigning: Boolean = providers.gradleProperty("volum.allowDebugSigning").orNull == "true"
 
 android {
     namespace = "dev.southstar21.volum.android"
@@ -60,8 +63,10 @@ android {
 
     buildTypes {
         release {
-            // Without a release key, sign with the debug key so the optimised build still installs.
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            // No release key means an unsigned APK, so a build made without the key can't pass for a
+            // release. Pass -Pvolum.allowDebugSigning=true to get one that installs on your own phone.
+            signingConfig = signingConfigs.findByName("release")
+                ?: signingConfigs.getByName("debug").takeIf { allowDebugSigning }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -90,4 +95,9 @@ dependencies {
     implementation(libs.compose.ui)
     // Renders the @Preview composables in shared's commonMain.
     debugImplementation(libs.compose.ui.tooling)
+}
+
+detekt {
+    config.setFrom(rootProject.file("config/detekt/detekt.yml"))
+    buildUponDefaultConfig = true
 }

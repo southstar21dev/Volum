@@ -2,13 +2,16 @@ package dev.southstar21.volum.data
 
 import dev.southstar21.volum.model.SetEntry
 import dev.southstar21.volum.model.WorkoutEntry
+import dev.southstar21.volum.util.isoOf
+import dev.southstar21.volum.util.nowIso
 import dev.southstar21.volum.util.parseTime
 
 /**
  * Merges the owner's snapshot of an active workout into the server copy, exercise by exercise and
  * set by set, so a partner's edits survive the owner's whole-record sync.
  *
- * Mirrors mergeEntries in backend/pb_hooks/workout_merge.js — keep the two in sync.
+ * Mirrors mergeEntries in backend/pb_hooks/workout_merge.js; keep the two in sync (the fixtures in
+ * test-fixtures/workout-merge run against both).
  */
 fun mergeWorkoutEntries(
     server: List<WorkoutEntry>,
@@ -31,7 +34,9 @@ fun mergeWorkoutEntries(
             if (set.id !in snapshotIds && set.id !in removed && parseTime(set.updatedAt) > snapshotTime) sets.add(set)
         }
         val base = if (parseTime(stored.updatedAt) > parseTime(entry.updatedAt)) stored else entry
-        if (removed.isNotEmpty()) base.copy(sets = sets, removedSetIds = removed.toList()) else base.copy(sets = sets)
+        // A partner can't edit the note, so whichever header won, the owner's note is the real one.
+        val head = base.copy(sets = sets, note = entry.note)
+        if (removed.isNotEmpty()) head.copy(removedSetIds = removed.toList()) else head
     }.toMutableList()
     for (stored in server) {
         if (stored.id !in snapshotEntryIds && stored.id !in removedEntries && parseTime(stored.updatedAt) > snapshotTime) {
@@ -80,8 +85,9 @@ private fun <T> rebase(basis: List<T>, current: List<T>, next: List<T>, id: (T) 
 }
 
 /** Stamps every exercise and set that is new or changed since [previous], for the merge above. */
-fun stampChangedSets(previous: List<WorkoutEntry>?, next: List<WorkoutEntry>, now: String): List<WorkoutEntry> =
-    next.map { entry ->
+fun stampChangedSets(previous: List<WorkoutEntry>?, next: List<WorkoutEntry>, requestedNow: String): List<WorkoutEntry> {
+    val now = monotonicNow(requestedNow, previous.orEmpty())
+    return next.map { entry ->
         val before = previous?.find { it.id == entry.id }
         val stampedEntry = if (before != null && sameEntry(before, entry)) entry else entry.copy(updatedAt = now)
         stampedEntry.copy(
@@ -91,6 +97,17 @@ fun stampChangedSets(previous: List<WorkoutEntry>?, next: List<WorkoutEntry>, no
             },
         )
     }
+}
+
+/**
+ * A stamp for an edit made at [now] that is never older than what [entries] already carry, so an edit
+ * made after seeing another one (a partner's, stamped by the server's clock) wins the merge even when
+ * the device clock runs a few seconds behind. Mirrors stampAfter in workout_merge.js.
+ */
+fun monotonicNow(now: String, entries: List<WorkoutEntry>): String {
+    val latest = entries.maxOfOrNull { entry -> maxOf(parseTime(entry.updatedAt), entry.sets.maxOfOrNull { parseTime(it.updatedAt) } ?: 0) } ?: 0
+    return if (latest == 0L || parseTime(now) > latest) now else isoOf(latest + 1)
+}
 
 private fun sameEntry(a: WorkoutEntry, b: WorkoutEntry): Boolean =
     a.exerciseId == b.exerciseId && a.name == b.name && a.timed == b.timed && a.skipped == b.skipped && a.note == b.note
@@ -105,20 +122,48 @@ sealed interface WorkoutMutation {
     data class RemoveEntry(val entryId: String) : WorkoutMutation
 }
 
-fun applyWorkoutMutation(entries: List<WorkoutEntry>, mutation: WorkoutMutation): List<WorkoutEntry> = when (mutation) {
-    is WorkoutMutation.Set -> entries.map { e ->
-        if (e.id != mutation.entryId) e else e.copy(sets = e.sets.map { if (it.id == mutation.setId) mutation.patch.copy(id = it.id) else it })
+/**
+ * What the server does to the stored entries for [mutation] (applyMutation in workout_merge.js), so
+ * the partner's screen shows the result before the reply arrives. A change the server would refuse
+ * (a blank name, an id that already exists) leaves [entries] as they were.
+ */
+fun applyWorkoutMutation(entries: List<WorkoutEntry>, mutation: WorkoutMutation, requestedNow: String = nowIso()): List<WorkoutEntry> {
+    val now = monotonicNow(requestedNow, entries)
+    return when (mutation) {
+        is WorkoutMutation.Set -> entries.map { e ->
+            if (e.id != mutation.entryId) e
+            else e.copy(sets = e.sets.map { if (it.id == mutation.setId) mutation.patch.copy(id = it.id, updatedAt = now) else it })
+        }
+        is WorkoutMutation.AddSet -> entries.map { e ->
+            if (e.id != mutation.entryId || e.sets.any { it.id == mutation.set.id }) e
+            else e.copy(sets = e.sets + mutation.set.copy(updatedAt = now))
+        }
+        is WorkoutMutation.RemoveSet -> entries.map { e ->
+            if (e.id != mutation.entryId) e
+            else {
+                val removed = e.removedSetIds.orEmpty()
+                val known = e.sets.any { it.id == mutation.setId } && mutation.setId !in removed
+                e.copy(sets = e.sets.filterNot { it.id == mutation.setId }, removedSetIds = if (known) removed + mutation.setId else e.removedSetIds)
+            }
+        }
+        is WorkoutMutation.AddEntry -> {
+            val entry = mutation.entry
+            if (entry.name.isBlank() || entry.exerciseId.isEmpty() || entries.any { it.id == entry.id } || entry.sets.map { it.id }.distinct().size != entry.sets.size) {
+                entries
+            } else {
+                // Only what a partner may set: the owner's note and removed sets stay the owner's.
+                entries + entry.copy(note = null, removedSetIds = null, updatedAt = now, sets = entry.sets.map { it.copy(updatedAt = now) })
+            }
+        }
+        is WorkoutMutation.UpdateEntry -> if (mutation.name != null && mutation.name.isBlank()) entries else entries.map {
+            if (it.id != mutation.entryId) it else it.copy(
+                name = mutation.name ?: it.name,
+                exerciseId = mutation.exerciseId ?: it.exerciseId,
+                timed = mutation.timed ?: it.timed,
+                skipped = mutation.skipped ?: it.skipped,
+                updatedAt = now,
+            )
+        }
+        is WorkoutMutation.RemoveEntry -> entries.filterNot { it.id == mutation.entryId }
     }
-    is WorkoutMutation.AddSet -> entries.map { if (it.id == mutation.entryId) it.copy(sets = it.sets + mutation.set) else it }
-    is WorkoutMutation.RemoveSet -> entries.map { e -> if (e.id == mutation.entryId) e.copy(sets = e.sets.filterNot { it.id == mutation.setId }) else e }
-    is WorkoutMutation.AddEntry -> entries + mutation.entry
-    is WorkoutMutation.UpdateEntry -> entries.map {
-        if (it.id != mutation.entryId) it else it.copy(
-            name = mutation.name ?: it.name,
-            exerciseId = mutation.exerciseId ?: it.exerciseId,
-            timed = mutation.timed ?: it.timed,
-            skipped = mutation.skipped ?: it.skipped,
-        )
-    }
-    is WorkoutMutation.RemoveEntry -> entries.filterNot { it.id == mutation.entryId }
 }

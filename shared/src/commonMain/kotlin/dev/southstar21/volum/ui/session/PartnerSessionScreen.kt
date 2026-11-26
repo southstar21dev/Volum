@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
 import dev.southstar21.volum.ui.components.ErrorText
@@ -46,6 +47,7 @@ import dev.southstar21.volum.model.WorkoutEntry
 import dev.southstar21.volum.model.WorkoutStatus
 import dev.southstar21.volum.ui.LocalApp
 import dev.southstar21.volum.ui.LocalNav
+import dev.southstar21.volum.ui.Route
 import dev.southstar21.volum.ui.LocalSession
 import dev.southstar21.volum.ui.exercisesState
 import dev.southstar21.volum.ui.components.ActionSheet
@@ -110,7 +112,7 @@ fun PartnerSessionScreen(workoutId: String) {
     // Any failure, not just the server's: one escaping into this screen's scope would crash the app.
     fun fail(e: Exception) {
         if (e is PbException && e.status == 404) ended = true
-        else error = if (e is PbException) partnerErrorMessage(e) else "Something went wrong"
+        else error = partnerErrorMessage(e)
     }
 
     suspend fun load() {
@@ -140,28 +142,33 @@ fun PartnerSessionScreen(workoutId: String) {
         }
     }
 
-    fun mutate(m: WorkoutMutation) {
+    fun mutateAll(batch: List<WorkoutMutation>) {
         val current = workout ?: return
-        workout = current.copy(entries = applyWorkoutMutation(current.entries, m))
+        workout = current.copy(entries = batch.fold(current.entries) { entries, m -> applyWorkoutMutation(entries, m) })
         if (inFlight[0]++ == 0) waitingSince = nowMillis()
-        scope.launch {
-            try {
-                // Counted down however the call ends, or receive() would ignore every later server copy.
-                val answer = try { session.partner.mutate(workoutId, m) } finally { if (--inFlight[0] == 0) waitingSince = null }
-                answer?.let(::receive)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                fail(e)
+        // Sent in order on the session's scope (see MutationQueue), so edits still waiting when this screen is left go out anyway.
+        session.partner.enqueueMutations(workoutId, batch) { result ->
+            // Counted down however the call ends, or receive() would ignore every later server copy.
+            if (--inFlight[0] == 0) waitingSince = null
+            result.onSuccess { it?.let(::receive) }
+            result.onFailure { e ->
+                fail(e as? Exception ?: return@onFailure)
                 if (inFlight[0] == 0) load()
             }
         }
     }
 
+    fun mutate(m: WorkoutMutation) = mutateAll(listOf(m))
+
     val partnerName = snapshot.partner?.displayName ?: "Partner"
     val library = remember(exercises) { exercises.values.filter { !it.deleted } }
     val actions = EntryActions(
         onSet = { entry, set -> mutate(WorkoutMutation.Set(entry.id, set.id, set)) },
+        // Built on the screen's copy, which each edit updates at once, so quick taps stack.
+        onNudge = { entry, setId, change ->
+            val now = workout?.entries?.firstOrNull { it.id == entry.id }?.sets?.firstOrNull { it.id == setId }
+            if (now != null) mutate(WorkoutMutation.Set(entry.id, setId, change(now)))
+        },
         onToggleDone = { entry, set ->
             haptic(toggleHaptic(workout?.entries ?: listOf(entry), entry, set))
             mutate(WorkoutMutation.Set(entry.id, set.id, set.copy(done = !set.done)))
@@ -236,7 +243,7 @@ fun PartnerSessionScreen(workoutId: String) {
             )
             Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(start = 16.dp, end = 16.dp, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 CircleButton(Icons.Plus, "Add exercise for $partnerName", size = 58.dp, iconSize = 22.dp) { addOpen = true }
-                GlassButton("Back to my session", Modifier.weight(1f), height = 58.dp, icon = Icons.ChevronLeft) { nav.pop() }
+                GlassButton(if (nav.stack.any { it.route is Route.Session }) "Back to my session" else "Back", Modifier.weight(1f), height = 58.dp, icon = Icons.ChevronLeft) { nav.pop() }
             }
         }
     }
@@ -273,9 +280,14 @@ fun PartnerSessionScreen(workoutId: String) {
                 mutate(WorkoutMutation.UpdateEntry(e.id, name = name))
             } else {
                 val current = workout?.entries?.firstOrNull { it.id == e.id } ?: e
-                mutate(WorkoutMutation.UpdateEntry(e.id, name = link.name, exerciseId = link.id, timed = link.isTimed))
-                // Relinked to a lift tracked the other way (time or reps), its sets change shape too.
-                if (current.isTimed != link.isTimed) current.sets.forEach { set -> mutate(WorkoutMutation.Set(e.id, set.id, reshapeSet(set, link.isTimed))) }
+                // Relinked to a lift tracked the other way (time or reps), its sets change shape too: all one request.
+                val relink = WorkoutMutation.UpdateEntry(e.id, name = link.name, exerciseId = link.id, timed = link.isTimed)
+                val reshaped = if (current.isTimed == link.isTimed) {
+                    emptyList()
+                } else {
+                    current.sets.map { set -> WorkoutMutation.Set(e.id, set.id, reshapeSet(set, link.isTimed)) }
+                }
+                mutateAll(listOf(relink) + reshaped)
             }
         },
         onDismiss = { renameEntry = null },

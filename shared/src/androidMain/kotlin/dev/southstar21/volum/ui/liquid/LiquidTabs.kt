@@ -82,7 +82,6 @@ import dev.southstar21.volum.ui.theme.tappable
  * stutter on its way there. If the caller doesn't take the selection, the drop returns to
  * [selectedIndex]. With reduced motion the drop moves without swelling or stretching.
  *
- * @param frosted no live refraction available: the pane is a plain frosted fill.
  * @param item one item's content; [tinted] is the accent copy the drop shows.
  */
 @Composable
@@ -97,9 +96,6 @@ fun LiquidTabs(
     /** The resting fill of the selection drop. */
     selection: Color = accent.copy(alpha = 0.25f),
     height: Dp = 64.dp,
-    frosted: Boolean = false,
-    /** Sitting on other glass: the pane is a plain surface, not backdrop glass (which doesn't render there). */
-    nested: Boolean = false,
     /** Paints the pane's glass over the refracted backdrop; defaults to a flat [container] fill. */
     surface: (androidx.compose.ui.graphics.drawscope.DrawScope.(androidx.compose.ui.graphics.Shape) -> Unit)? = null,
     /** The drop crossed onto another item: a detent, for a haptic tick. */
@@ -108,10 +104,6 @@ fun LiquidTabs(
 ) {
     if (count <= 0) return
     val reduce = LocalReduceMotion.current
-    if (nested) {
-        PlainTabs(reduce, count, selectedIndex, onSelect, container, selection, modifier, height, surface, onCross, item)
-        return
-    }
     val selectedNow by rememberUpdatedState(selectedIndex)
     val onSelectNow by rememberUpdatedState(onSelect)
     val shadowColor = Color.Black.copy(alpha = 0.10f)
@@ -215,12 +207,7 @@ fun LiquidTabs(
                 .drawBackdrop(
                     backdrop = backdrop,
                     shape = { Capsule() },
-                    effects = {
-                        if (frosted) blur(32.dp.toPx()) else {
-                            // iOS's bar material scatters what's behind it well past legibility.
-                            vibrancy(); blur(10.dp.toPx()); lens(20.dp.toPx(), 28.dp.toPx())
-                        }
-                    },
+                    effects = { blur(32.dp.toPx()) },
                     // A faint rim: the system bar's edge barely catches the light.
                     highlight = { Highlight.Default.copy(alpha = 0.3f) },
                     layerBlock = {
@@ -336,78 +323,3 @@ private fun paneSwell(grow: Float, width: Float, progress: Float): Float =
 
 /** How long a tapped item waits for the caller to select it before the drop returns to the selection. */
 private const val SelectionGraceMillis = 300L
-
-/**
- * [LiquidTabs] on other glass (a sheet, a card). Layered liquid glass inside another glass surface
- * rendered only in part there (a blank pane, or a pill with no label), so this draws the same look
- * with no layers of its own: the pane painted directly, the pill moved by placement, and the label
- * under it turning to the accent. It slides between items but doesn't become a drop of glass.
- */
-@Composable
-private fun PlainTabs(
-    reduce: Boolean,
-    count: Int,
-    selectedIndex: Int,
-    onSelect: (Int) -> Unit,
-    container: Color,
-    selection: Color,
-    modifier: Modifier,
-    height: Dp,
-    surface: (androidx.compose.ui.graphics.drawscope.DrawScope.(androidx.compose.ui.graphics.Shape) -> Unit)?,
-    onCross: () -> Unit,
-    item: @Composable ColumnScope.(index: Int, tinted: Boolean) -> Unit,
-) {
-    val position = remember { Animatable(selectedIndex.toFloat()) }
-    LaunchedEffect(selectedIndex, reduce) {
-        if (reduce) position.snapTo(selectedIndex.toFloat())
-        else position.animateTo(selectedIndex.toFloat(), spring(dampingRatio = 0.8f, stiffness = 500f))
-    }
-    val onCrossNow by rememberUpdatedState(onCross)
-    LaunchedEffect(Unit) { snapshotFlow { position.value.fastRoundToInt() }.drop(1).collect { onCrossNow() } }
-    // Only the item under the pill matters to the labels: rounded, so the slide recomposes them once
-    // per item crossed, not on every frame.
-    val shown by remember { derivedStateOf { position.value.fastRoundToInt() } }
-    var widthPx by remember { mutableFloatStateOf(0f) }
-    val pane = Capsule()
-    Box(
-        modifier
-            .height(height)
-            .onSizeChanged { widthPx = it.width.toFloat() }
-            .drawWithCache {
-                if (size.width <= 0f || size.height <= 0f) return@drawWithCache onDrawBehind {}
-                val path = Path().apply { addOutline(pane.createOutline(size, layoutDirection, this@drawWithCache)) }
-                onDrawBehind { clipPath(path) { if (surface != null) surface(pane) else drawRect(container) } }
-            }
-            .padding(4.dp),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        val inner = with(LocalDensity.current) { (widthPx - 8.dp.toPx()).coerceAtLeast(0f) }
-        // The pill, placed (not drawn in a layer) under the item it sits on.
-        Box(
-            Modifier
-                .offset { androidx.compose.ui.unit.IntOffset((position.value * inner / count).fastRoundToInt(), 0) }
-                .fillMaxWidth(1f / count)
-                .fillMaxHeight()
-                .drawBehind {
-                    if (size.width <= 0f || size.height <= 0f) return@drawBehind
-                    val r = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
-                    drawRoundRect(container.copy(alpha = container.alpha.coerceAtLeast(0.94f)), cornerRadius = r)
-                    drawRoundRect(selection, cornerRadius = r)
-                },
-        )
-        Row(Modifier.fillMaxSize().selectableGroup(), verticalAlignment = Alignment.CenterVertically) {
-            repeat(count) { index ->
-                Column(
-                    Modifier
-                        .clip(Capsule())
-                        .tappable(role = Role.Tab, highlight = false, debounce = false) { if (index != selectedIndex) onSelect(index) }
-                        .semantics { selected = index == selectedIndex }
-                        .fillMaxHeight()
-                        .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) { item(index, shown == index) }
-            }
-        }
-    }
-}

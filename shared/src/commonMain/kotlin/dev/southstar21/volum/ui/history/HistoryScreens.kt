@@ -56,10 +56,13 @@ import dev.southstar21.volum.ui.LocalNav
 import dev.southstar21.volum.ui.LocalSession
 import dev.southstar21.volum.ui.Route
 import dev.southstar21.volum.ui.ownCompleted
-import dev.southstar21.volum.ui.rememberNow
+import dev.southstar21.volum.ui.rememberToday
 import dev.southstar21.volum.ui.workoutsState
 import dev.southstar21.volum.ui.components.CircleButton
 import dev.southstar21.volum.ui.components.ConfirmSheet
+import dev.southstar21.volum.ui.routinesState
+import dev.southstar21.volum.ui.session.applySessionToRoutine
+import dev.southstar21.volum.ui.session.routineChanges
 import dev.southstar21.volum.ui.components.Divider
 import dev.southstar21.volum.ui.components.GlassCard
 import dev.southstar21.volum.ui.components.Mute
@@ -152,10 +155,10 @@ fun HistoryScreen() {
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     val workouts by session.workoutsState()
-    val now = rememberNow(60_000)
     val completed = remember(workouts) { ownCompleted(workouts, session.user.id).sortedByDescending { workoutTime(it) } }
     val byDay = remember(completed) { completed.groupBy { localDateOf(workoutTime(it)) } }
-    val today = localDateOf(now)
+    // Only changes when the day does, so the screen isn't recomposed every minute.
+    val today = rememberToday()
     // Kept by id, so an open delete prompt survives the activity being recreated.
     var deleteTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     val deleteTarget = deleteTargetId?.let { workouts[it] }?.takeIf { !it.deleted }
@@ -336,14 +339,33 @@ private fun Heatmap(start: LocalDate, today: LocalDate, volumes: Map<LocalDate, 
             wave.animateTo(1f, tween(900, easing = LinearEasing))
         }
     }
-    fun level(day: LocalDate): Int {
-        val v = volumes[day] ?: return 0
-        val f = v / max
-        return when {
-            f < 0.4 -> 1
-            f < 0.6 -> 2
-            f < 0.85 -> 3
-            else -> 4
+    // Everything the wave redraws every frame is worked out once: the level of each square (-1 for a
+    // day still to come), one brush per level, and the measured month names.
+    val levels = remember(start, today, volumes, max) {
+        IntArray(HEAT_WEEKS * 7) { i ->
+            val day = start.plus(DatePeriod(days = i))
+            val v = volumes[day]
+            when {
+                day > today -> -1
+                v == null -> 0
+                else -> {
+                    val f = v / max
+                    when {
+                        f < 0.4 -> 1
+                        f < 0.6 -> 2
+                        f < 0.85 -> 3
+                        else -> 4
+                    }
+                }
+            }
+        }
+    }
+    val todayIndex = remember(start, today) { start.daysUntil(today) }
+    val brushes = remember(c) { Array(5) { heatBrush(it, c) } }
+    val monthLabels = remember(start, measurer, labelStyle) {
+        (0 until HEAT_WEEKS - 1).mapNotNull { col ->
+            val monday = start.plus(DatePeriod(days = col * 7))
+            if (monday.day <= 7) col to measurer.measure(monthShort(monday), labelStyle) else null
         }
     }
     val gap = 3.dp
@@ -371,14 +393,11 @@ private fun Heatmap(start: LocalDate, today: LocalDate, volumes: Map<LocalDate, 
             val top = labelHeight.toPx()
             val radius = CornerRadius(4.dp.toPx())
             // Month names over the first week of each month.
-            for (col in 0 until HEAT_WEEKS) {
-                val monday = start.plus(DatePeriod(days = col * 7))
-                if (monday.day <= 7 && col < HEAT_WEEKS - 1) drawText(measurer, monthShort(monday), Offset(col * step, 0f), labelStyle)
-            }
+            for ((col, label) in monthLabels) drawText(label, topLeft = Offset(col * step, 0f))
             // The wave runs from the oldest week to today, each square popping with a little overshoot.
             val spread = (HEAT_WEEKS - 1) * 0.6f + 6 * 0.25f
             for (col in 0 until HEAT_WEEKS) for (row in 0..6) {
-                val day = start.plus(DatePeriod(days = col * 7 + row))
+                val level = levels[col * 7 + row]
                 val t = ((wave.value * (spread + 4f) - (col * 0.6f + row * 0.25f)) / 4f).coerceIn(0f, 1f)
                 if (t <= 0f) continue
                 val u = t - 1f
@@ -387,10 +406,10 @@ private fun Heatmap(start: LocalDate, today: LocalDate, volumes: Map<LocalDate, 
                 val origin = Offset(col * step + (side - s) / 2, top + row * step + (side - s) / 2)
                 val alpha = (t * 2f).coerceAtMost(1f)
                 when {
-                    day > today -> drawRoundRect(c.ink.copy(alpha = 0.1f * alpha), origin, Size(s, s), radius, style = Stroke(1.dp.toPx()))
-                    else -> drawRoundRect(heatBrush(level(day), c), origin, Size(s, s), radius, alpha = alpha)
+                    level < 0 -> drawRoundRect(c.ink.copy(alpha = 0.1f * alpha), origin, Size(s, s), radius, style = Stroke(1.dp.toPx()))
+                    else -> drawRoundRect(brushes[level], origin, Size(s, s), radius, alpha = alpha)
                 }
-                if (day == today) drawRoundRect(c.accent.copy(alpha = alpha), origin, Size(s, s), radius, style = Stroke(1.5.dp.toPx()))
+                if (col * 7 + row == todayIndex) drawRoundRect(c.accent.copy(alpha = alpha), origin, Size(s, s), radius, style = Stroke(1.5.dp.toPx()))
             }
         }
     }
@@ -418,6 +437,12 @@ fun WorkoutDetailScreen(workoutId: String) {
         editIds?.let { (entryId, setId) -> workout?.entries?.firstOrNull { it.id == entryId }?.let { e -> e.sets.firstOrNull { it.id == setId }?.let { e to it } } }
     }
     var deletePrompt by rememberSaveable { mutableStateOf(false) }
+    var updatePrompt by rememberSaveable { mutableStateOf(false) }
+    // The routine this workout came from, made to match it: offered when that's a change. Your own routines only.
+    val routines by session.routinesState()
+    val routine = workout?.routineId?.let { routines[it] }?.takeIf { !it.deleted && it.owner == session.user.id }
+    val routineUpdate = if (workout != null && routine != null) applySessionToRoutine(routine.items, workout.entries, ::newId).takeIf { it != routine.items } else null
+    val updateChanges = routineUpdate?.let { routineChanges(routine!!.items, it) }
     // Which exercises are open. The first one done starts open, so the sets are a glance away.
     var open by rememberSaveable(stateSaver = IdSetSaver) { mutableStateOf(workout?.entries?.firstOrNull { !it.isSkipped }?.id?.let { setOf(it) } ?: emptySet()) }
 
@@ -425,7 +450,12 @@ fun WorkoutDetailScreen(workoutId: String) {
         TopInset(10.dp)
         Toolbar(
             leading = { CircleButton(Icons.ChevronLeft, "Back to history") { nav.pop() } },
-            trailing = { if (workout != null) CircleButton(Icons.Trash, "Delete workout", tint = c.danger) { deletePrompt = true } },
+            trailing = {
+                if (workout != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (routine != null && routineUpdate != null) CircleButton(Icons.Refresh, "Update ${routine.name} from this workout") { updatePrompt = true }
+                    CircleButton(Icons.Trash, "Delete workout", tint = c.danger) { deletePrompt = true }
+                }
+            },
         )
         if (workout == null) {
             Mute("This workout was deleted.", Modifier.padding(24.dp))
@@ -521,6 +551,15 @@ fun WorkoutDetailScreen(workoutId: String) {
         onSave = { entry, set -> workout?.let { w -> scope.launch { session.repository.updateWorkout(w, w.entries.map { e -> if (e.id == entry.id) e.copy(sets = e.sets.map { if (it.id == set.id) set else it }) else e }) } } },
         onRemove = { entry, set -> workout?.let { w -> scope.launch { session.repository.updateWorkout(w, w.entries.map { e -> if (e.id == entry.id) e.copy(sets = e.sets.filterNot { it.id == set.id }) else e }) } } },
         onDismiss = { editIds = null },
+    )
+    ConfirmSheet(
+        open = updatePrompt && routine != null && routineUpdate != null,
+        title = "Update ${routine?.name ?: "the routine"} from this workout?",
+        message = updateChanges?.summary(),
+        confirm = "Update ${routine?.name ?: "the routine"}",
+        destructive = false,
+        onConfirm = { if (routine != null && routineUpdate != null) scope.launch { session.repository.saveRoutine(routine.id, routine.name, routineUpdate) } },
+        onDismiss = { updatePrompt = false },
     )
     ConfirmSheet(
         open = deletePrompt,
