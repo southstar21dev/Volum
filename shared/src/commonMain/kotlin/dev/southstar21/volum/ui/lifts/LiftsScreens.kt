@@ -69,7 +69,7 @@ import dev.southstar21.volum.ui.LocalNav
 import dev.southstar21.volum.ui.LocalSession
 import dev.southstar21.volum.ui.Route
 import dev.southstar21.volum.ui.exercisesState
-import dev.southstar21.volum.ui.rememberNow
+import dev.southstar21.volum.ui.rememberNowRounded
 import dev.southstar21.volum.ui.workoutsState
 import dev.southstar21.volum.ui.components.ActionSheet
 import dev.southstar21.volum.ui.components.BareField
@@ -376,7 +376,7 @@ fun ExerciseDetailScreen(exerciseId: String) {
     val prefs by app.prefs.collectAsStateWithLifecycle()
     val exercises by session.exercisesState()
     val workouts by session.workoutsState()
-    val now = rememberNow(60_000)
+    val now = rememberNowRounded(3_600_000L)
     val c = Volum.colors
     val exercise = exercises[exerciseId]
     val own = remember(workouts) { workouts.values.filter { it.owner == session.user.id } }

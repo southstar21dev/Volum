@@ -56,7 +56,7 @@ import dev.southstar21.volum.ui.LocalNav
 import dev.southstar21.volum.ui.LocalSession
 import dev.southstar21.volum.ui.Route
 import dev.southstar21.volum.ui.ownCompleted
-import dev.southstar21.volum.ui.rememberNow
+import dev.southstar21.volum.ui.rememberToday
 import dev.southstar21.volum.ui.workoutsState
 import dev.southstar21.volum.ui.components.CircleButton
 import dev.southstar21.volum.ui.components.ConfirmSheet
@@ -152,10 +152,10 @@ fun HistoryScreen() {
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     val workouts by session.workoutsState()
-    val now = rememberNow(60_000)
     val completed = remember(workouts) { ownCompleted(workouts, session.user.id).sortedByDescending { workoutTime(it) } }
     val byDay = remember(completed) { completed.groupBy { localDateOf(workoutTime(it)) } }
-    val today = localDateOf(now)
+    // Only changes when the day does, so the screen isn't recomposed every minute.
+    val today = rememberToday()
     // Kept by id, so an open delete prompt survives the activity being recreated.
     var deleteTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     val deleteTarget = deleteTargetId?.let { workouts[it] }?.takeIf { !it.deleted }
