@@ -390,7 +390,8 @@ fun RoutineEditorScreen(routineId: String?) {
 /** The routine draft's exercises, saved as JSON with the screen's state. */
 private val RoutineItemsSaver = Saver<SnapshotStateList<RoutineItem>, String>(
     save = { VolumJson.encodeToString(ListSerializer(RoutineItem.serializer()), it.toList()) },
-    restore = { saved -> mutableStateListOf<RoutineItem>().apply { addAll(VolumJson.decodeFromString(ListSerializer(RoutineItem.serializer()), saved)) } },
+    // A malformed or incompatible saved draft (an older build wrote it) restores as empty, not a crash.
+    restore = { saved -> mutableStateListOf<RoutineItem>().apply { addAll(runCatching { VolumJson.decodeFromString(ListSerializer(RoutineItem.serializer()), saved) }.getOrDefault(emptyList())) } },
 )
 
 /** The stepper's next value down: the grid line of [step] below [value] (32 → 30 for 5), within [min]..[max]. */

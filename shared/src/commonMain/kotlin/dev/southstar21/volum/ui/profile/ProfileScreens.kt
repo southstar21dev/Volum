@@ -118,6 +118,7 @@ fun ProfileScreen() {
     // The picked photo while it's being cropped; not saved across process death (it can be megabytes).
     var pickedPhoto by remember { mutableStateOf<ByteArray?>(null) }
     var savingPhoto by remember { mutableStateOf(false) }
+    var removingPhoto by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
     var photoError by remember { mutableStateOf<String?>(null) }
     val pickPhoto = rememberPhotoPicker(
@@ -126,7 +127,7 @@ fun ProfileScreen() {
     )
 
     fun savePhoto(cropped: ImageBitmap) {
-        if (savingPhoto) return
+        if (savingPhoto || removingPhoto) return
         savingPhoto = true
         saveError = null
         scope.launch {
@@ -147,6 +148,8 @@ fun ProfileScreen() {
     }
 
     fun removeAvatar() {
+        if (removingPhoto || savingPhoto) return
+        removingPhoto = true
         photoError = null
         scope.launch {
             try {
@@ -157,6 +160,8 @@ fun ProfileScreen() {
                 photoError = if (e.status == 0) "You're offline. Try again once you're connected." else "Couldn't remove your photo. Try again."
             } catch (e: Exception) {
                 photoError = "Couldn't remove your photo. Try again."
+            } finally {
+                removingPhoto = false
             }
         }
     }
@@ -410,6 +415,8 @@ fun PairPartnerScreen() {
     var error by remember { mutableStateOf<String?>(null) }
 
     fun run(block: suspend () -> Unit) {
+        // A second tap while a request is in flight would repeat it and fail with a spurious 404/400.
+        if (busy) return
         busy = true; error = null; message = null
         scope.launch {
             try { block() }
@@ -482,8 +489,8 @@ fun PairPartnerScreen() {
                     }
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        GlassButton("Decline", Modifier.weight(1f), height = 46.dp) { run { session.partner.decline(req.id) } }
-                        PrimaryButton("Accept", Modifier.weight(1f), height = 46.dp) { run { session.partner.accept(req.id); nav.pop() } }
+                        GlassButton("Decline", Modifier.weight(1f), height = 46.dp, enabled = !busy) { run { session.partner.decline(req.id) } }
+                        PrimaryButton("Accept", Modifier.weight(1f), height = 46.dp, enabled = !busy) { run { session.partner.accept(req.id); nav.pop() } }
                     }
                 }
             }
