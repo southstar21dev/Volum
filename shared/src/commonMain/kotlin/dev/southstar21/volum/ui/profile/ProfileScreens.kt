@@ -139,8 +139,6 @@ fun ProfileScreen() {
                 throw e
             } catch (e: Exception) {
                 saveError = actionErrorMessage(e, "You're offline. Try again once you're connected.", "Couldn't save your photo. Try again.")
-            } catch (e: Exception) {
-                saveError = "Couldn't save your photo. Try again."
             } finally {
                 savingPhoto = false
             }

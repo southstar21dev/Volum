@@ -152,11 +152,11 @@ internal fun AvatarCropScreen(
     var rendering by remember { mutableStateOf(false) }
 
     Overlay {
-        BackHandler { if (!busy) onCancel() }
+        BackHandler { if (!busy && !rendering) onCancel() }
         Column(Modifier.fillMaxSize().background(CropBackground).navigationBarsPadding()) {
             TopInset(10.dp)
             Toolbar(
-                leading = { CircleButton(Icons.X, "Cancel", tint = OnDark, enabled = !busy) { onCancel() } },
+                leading = { CircleButton(Icons.X, "Cancel", tint = OnDark, enabled = !busy && !rendering) { onCancel() } },
                 center = { Txt("Move and scale", size = T.Body, weight = ExtraBold, color = OnDark) },
             )
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -222,7 +222,7 @@ internal fun AvatarCropScreen(
                         }
                     }
                 }
-                TextButton("Choose another", color = OnDarkMute) { if (!busy) onChooseAnother() }
+                TextButton("Choose another", color = OnDarkMute) { if (!busy && !rendering) onChooseAnother() }
             }
         }
     }
