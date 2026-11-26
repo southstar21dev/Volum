@@ -178,6 +178,16 @@ class PartnerRepository(
         return decodeRecord(Workout.serializer(), result)
     }
 
+    private val queues = mutableMapOf<String, MutationQueue<WorkoutMutation, Workout?>>()
+
+    /**
+     * Queues an edit of [workoutId] behind the earlier ones of that workout, sent in order on the
+     * session's scope: leaving the screen doesn't drop what is still waiting. [onDone] gets the outcome.
+     */
+    fun enqueueMutation(workoutId: String, mutation: WorkoutMutation, onDone: suspend (Result<Workout?>) -> Unit) {
+        queues.getOrPut(workoutId) { MutationQueue(scope) { mutate(workoutId, it) } }.submit(mutation, onDone)
+    }
+
     /** Follows [workoutId]'s live changes on the stream [start] opened (nothing arrives while the app is in the background). */
     fun subscribe(scope: CoroutineScope, workoutId: String, onRecord: (Workout) -> Unit): Job =
         scope.launch { _workoutEvents.filter { it.id == workoutId }.collect(onRecord) }

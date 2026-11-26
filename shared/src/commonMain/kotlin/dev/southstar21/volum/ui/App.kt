@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.lifecycle.compose.LifecycleStartEffect
 import dev.southstar21.volum.ui.components.clearDecodedPhotos
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
@@ -287,6 +288,10 @@ private fun ForegroundSync(session: UserSession?) {
         onStopOrDispose {
             session.sync.foreground = false
             session.partner.setForeground(false)
+            // Writes are batched for a moment (see LocalStore), and a backgrounded process can die at
+            // any time: write what is pending now. On the app's scope, which outlives this effect; it
+            // can't clash with a sign-out's own final write (the store serialises them).
+            session.app.scope.launch { session.store.flushNow() }
         }
     }
 }

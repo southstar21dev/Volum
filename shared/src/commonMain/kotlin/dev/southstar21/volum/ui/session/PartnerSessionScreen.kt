@@ -71,7 +71,6 @@ import dev.southstar21.volum.util.plural
 import kotlinx.coroutines.CancellationException
 import androidx.compose.runtime.mutableLongStateOf
 import dev.southstar21.volum.util.nowMillis
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -143,29 +142,20 @@ fun PartnerSessionScreen(workoutId: String) {
         }
     }
 
-    // Edits go to the server one at a time, in the order they were made: sent concurrently, two nudges
-    // (or an AddSet and the Set after it) could land out of order and revert each other.
-    val outbox = remember(workoutId) { Channel<WorkoutMutation>(Channel.UNLIMITED) }
-    LaunchedEffect(outbox) {
-        for (m in outbox) {
-            try {
-                // Counted down however the call ends, or receive() would ignore every later server copy.
-                val answer = try { session.partner.mutate(workoutId, m) } finally { if (--inFlight[0] == 0) waitingSince = null }
-                answer?.let(::receive)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                fail(e)
-                if (inFlight[0] == 0) load()
-            }
-        }
-    }
-
     fun mutate(m: WorkoutMutation) {
         val current = workout ?: return
         workout = current.copy(entries = applyWorkoutMutation(current.entries, m))
         if (inFlight[0]++ == 0) waitingSince = nowMillis()
-        outbox.trySend(m)
+        // Sent in order on the session's scope (see MutationQueue), so edits still waiting when this screen is left go out anyway.
+        session.partner.enqueueMutation(workoutId, m) { result ->
+            // Counted down however the call ends, or receive() would ignore every later server copy.
+            if (--inFlight[0] == 0) waitingSince = null
+            result.onSuccess { it?.let(::receive) }
+            result.onFailure { e ->
+                fail(e as? Exception ?: return@onFailure)
+                if (inFlight[0] == 0) load()
+            }
+        }
     }
 
     val partnerName = snapshot.partner?.displayName ?: "Partner"
