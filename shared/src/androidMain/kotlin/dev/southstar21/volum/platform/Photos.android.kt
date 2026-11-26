@@ -18,6 +18,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import java.io.ByteArrayOutputStream
 import kotlin.coroutines.cancellation.CancellationException
@@ -29,7 +30,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-actual fun rememberPhotoPicker(onPicked: (ByteArray) -> Unit, onError: () -> Unit): () -> Unit {
+actual fun rememberPhotoPicker(onPicked: (ImageBitmap) -> Unit, onError: () -> Unit): () -> Unit {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val picked by rememberUpdatedState(onPicked)
@@ -37,7 +38,7 @@ actual fun rememberPhotoPicker(onPicked: (ByteArray) -> Unit, onError: () -> Uni
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            val bytes = withContext(Dispatchers.IO) {
+            val photo = withContext(Dispatchers.IO) {
                 try {
                     readPhoto(context, uri)
                 } catch (e: CancellationException) {
@@ -48,7 +49,7 @@ actual fun rememberPhotoPicker(onPicked: (ByteArray) -> Unit, onError: () -> Uni
                     null
                 }
             }
-            if (bytes != null) picked(bytes) else failed()
+            if (photo != null) picked(photo) else failed()
         }
     }
     return remember(launcher) {
@@ -61,8 +62,8 @@ actual fun encodeJpeg(bitmap: ImageBitmap, quality: Int): ByteArray = bitmap.asA
 private fun Bitmap.toJpeg(quality: Int): ByteArray =
     ByteArrayOutputStream().also { compress(Bitmap.CompressFormat.JPEG, quality, it) }.toByteArray()
 
-/** The photo at [uri], upright and scaled down, as JPEG. */
-private fun readPhoto(context: Context, uri: Uri): ByteArray? {
+/** The photo at [uri], upright and scaled down. */
+private fun readPhoto(context: Context, uri: Uri): ImageBitmap? {
     val bitmap = if (Build.VERSION.SDK_INT >= 28) {
         // ImageDecoder applies the EXIF orientation itself and decodes straight to the smaller size.
         ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
@@ -73,7 +74,7 @@ private fun readPhoto(context: Context, uri: Uri): ByteArray? {
     } else {
         decodeLegacy(context, uri) ?: return null
     }
-    return bitmap.toJpeg(90).also { bitmap.recycle() }
+    return bitmap.asImageBitmap()
 }
 
 private fun scaleFor(width: Int, height: Int): Float = min(1f, PICKED_PHOTO_MAX_PX / max(width, height).toFloat())

@@ -24,6 +24,8 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
 import io.ktor.http.encodeURLParameter
 import io.ktor.http.encodeURLPathPart
+import io.ktor.http.fromHttpToGmtDate
+import dev.southstar21.volum.util.nowMillis
 import io.ktor.utils.io.readLine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -79,6 +81,21 @@ class PocketBase(
         clientPlatform?.let { header(APP_PLATFORM_HEADER, it) }
     }
 
+    /**
+     * How far the server's clock is ahead of this device's (negative: behind), in ms, from the `Date`
+     * header of the latest reply. 0 until a reply says, and when the difference is too small to tell
+     * from the header's one-second resolution.
+     */
+    @Volatile var clockOffsetMs: Long = 0
+        private set
+
+    /** The server's time as best known now (epoch ms): the device clock corrected by [clockOffsetMs]. */
+    fun serverNowMillis(): Long = nowMillis() + clockOffsetMs
+
+    private fun noteServerDate(header: String?) {
+        clockOffset(header, nowMillis())?.let { clockOffsetMs = it }
+    }
+
     private fun url(path: String) = baseUrl.trimEnd('/') + path
 
     /** Releases the HTTP client's connections and threads; the instance can't be used afterwards. */
@@ -105,6 +122,7 @@ class PocketBase(
                 }
                 configure()
             }
+            noteServerDate(response.headers[HttpHeaders.Date])
             response.status.value to response.bodyAsText()
         } catch (e: CancellationException) {
             // A timed-out call can surface as a cancellation of the request rather than of this
@@ -335,6 +353,28 @@ class PocketBase(
 
         /** 426 Upgrade Required: the server's answer to a build older than its minimum. */
         const val UPDATE_REQUIRED = 426
+
+        /** A difference beyond this is a broken `Date` (a stale cache, a bad proxy), not a skewed clock. */
+        private const val MAX_CLOCK_OFFSET_MS = 24 * 60 * 60 * 1000L
+
+        /** `Date` is whole seconds, so a smaller difference than this is rounding, not skew. */
+        private const val CLOCK_OFFSET_DEADBAND_MS = 2_000L
+
+        /**
+         * The server clock's offset from the device's, from a `Date` response header [dateHeader] that
+         * arrived at [receivedAtMillis] (device clock); null when it is missing, unreadable or absurd.
+         */
+        fun clockOffset(dateHeader: String?, receivedAtMillis: Long): Long? {
+            if (dateHeader.isNullOrBlank()) return null
+            val server = try {
+                dateHeader.fromHttpToGmtDate().timestamp
+            } catch (_: Exception) {
+                return null
+            }
+            val offset = server - receivedAtMillis
+            if (kotlin.math.abs(offset) > MAX_CLOCK_OFFSET_MS) return null
+            return if (kotlin.math.abs(offset) < CLOCK_OFFSET_DEADBAND_MS) 0 else offset
+        }
 
         private val PLACEHOLDER = Regex("\\{:(\\w+)\\}")
 

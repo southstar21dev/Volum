@@ -264,12 +264,7 @@ class SyncEngine(
         for (item in store.outbox.value.sortedBy { it.id }) {
             if (item.failed) { failed++; continue }
             try {
-                try {
-                    pb.update(item.collection, item.recordId, withSyncBase(item))
-                } catch (e: PbException) {
-                    if (e.status != 404) throw e
-                    pb.create(item.collection, JsonObject(mapOf("id" to JsonPrimitive(item.recordId)) + item.payload))
-                }
+                push(item)
                 store.transaction { updateOutbox { list -> list.filterNot { it.id == item.id } } }
                 sent++
             } catch (e: PbException) {
@@ -289,6 +284,36 @@ class SyncEngine(
             }
         }
         return PushResult(sent, failed)
+    }
+
+    /**
+     * Sends one queued change. A record created here is POSTed straight away; if the server says it is
+     * there already (an earlier push got through but its answer was lost), it is PATCHed instead. Any
+     * other record is PATCHed, and POSTed if the server doesn't have it (404).
+     */
+    private suspend fun push(item: OutboxItem) {
+        val created = JsonObject(mapOf("id" to JsonPrimitive(item.recordId)) + item.payload)
+        if (item.isNew) {
+            try {
+                pb.create(item.collection, created)
+            } catch (e: PbException) {
+                if (e.status != 400) throw e
+                try {
+                    pb.update(item.collection, item.recordId, withSyncBase(item))
+                } catch (u: PbException) {
+                    // Not there after all: the POST was refused for a reason of its own.
+                    if (u.status == 404) throw e
+                    throw u
+                }
+            }
+            return
+        }
+        try {
+            pb.update(item.collection, item.recordId, withSyncBase(item))
+        } catch (e: PbException) {
+            if (e.status != 404) throw e
+            pb.create(item.collection, created)
+        }
     }
 
     /**

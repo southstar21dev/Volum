@@ -40,7 +40,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import dev.southstar21.volum.data.PbException
+import dev.southstar21.volum.data.actionErrorMessage
 import dev.southstar21.volum.data.SyncProblem
 import dev.southstar21.volum.data.SyncState
 import dev.southstar21.volum.data.partnerErrorMessage
@@ -116,7 +116,7 @@ fun ProfileScreen() {
     var photoSheet by remember { mutableStateOf(false) }
     var removePhoto by remember { mutableStateOf(false) }
     // The picked photo while it's being cropped; not saved across process death (it can be megabytes).
-    var pickedPhoto by remember { mutableStateOf<ByteArray?>(null) }
+    var pickedPhoto by remember { mutableStateOf<ImageBitmap?>(null) }
     var savingPhoto by remember { mutableStateOf(false) }
     var removingPhoto by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
@@ -137,8 +137,8 @@ fun ProfileScreen() {
                 pickedPhoto = null
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: PbException) {
-                saveError = if (e.status == 0) "You're offline. Try again once you're connected." else e.fieldMessage ?: "Couldn't save your photo. Try again."
+            } catch (e: Exception) {
+                saveError = actionErrorMessage(e, "You're offline. Try again once you're connected.", "Couldn't save your photo. Try again.")
             } catch (e: Exception) {
                 saveError = "Couldn't save your photo. Try again."
             } finally {
@@ -156,10 +156,8 @@ fun ProfileScreen() {
                 app.removeAvatar()
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: PbException) {
-                photoError = if (e.status == 0) "You're offline. Try again once you're connected." else "Couldn't remove your photo. Try again."
             } catch (e: Exception) {
-                photoError = "Couldn't remove your photo. Try again."
+                photoError = actionErrorMessage(e, "You're offline. Try again once you're connected.", "Couldn't remove your photo. Try again.", serverText = false)
             } finally {
                 removingPhoto = false
             }
@@ -177,10 +175,8 @@ fun ProfileScreen() {
                 session.repository.deletePartnerLocalData()
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: PbException) {
-                partnerError = partnerErrorMessage(e)
             } catch (e: Exception) {
-                partnerError = "Something went wrong"
+                partnerError = partnerErrorMessage(e)
             } finally {
                 unpairing = false
             }
@@ -298,8 +294,7 @@ fun ProfileScreen() {
             scope.launch {
                 try { app.setDisplayName(draft.trim()); editName = false; nameError = null }
                 catch (e: CancellationException) { throw e }
-                catch (e: PbException) { nameError = if (e.status == 0) "You're offline." else e.fieldMessage ?: "Couldn't save your name. Try again." }
-                catch (e: Exception) { nameError = "Couldn't save your name. Try again." }
+                catch (e: Exception) { nameError = actionErrorMessage(e, "You're offline.", "Couldn't save your name. Try again.") }
             }
         }
     }
@@ -421,8 +416,7 @@ fun PairPartnerScreen() {
         scope.launch {
             try { block() }
             catch (e: CancellationException) { throw e }
-            catch (e: PbException) { error = partnerErrorMessage(e) }
-            catch (e: Exception) { error = "Something went wrong" }
+            catch (e: Exception) { error = partnerErrorMessage(e) }
             finally { busy = false }
         }
     }

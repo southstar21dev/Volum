@@ -46,12 +46,17 @@ internal fun rememberPhoto(url: String?): ImageBitmap? {
 @OptIn(ExperimentalResourceApi::class)
 private fun decode(bytes: ByteArray): ImageBitmap? = runCatching { bytes.decodeToImageBitmap() }.getOrNull()
 
+/** Forgets every decoded photo, so the next account never sees the previous one's (called on sign-out). */
+fun clearDecodedPhotos() = DecodedPhotos.clear()
+
 /** Decoded photos recently shown, so returning to a screen doesn't flash the letter first. */
 private object DecodedPhotos {
     private const val MAX = 16
     private val entries = LinkedHashMap<String, ImageBitmap>()
 
     fun get(url: String): ImageBitmap? = entries.remove(url)?.also { entries[url] = it }
+
+    fun clear() = entries.clear()
 
     fun put(url: String, photo: ImageBitmap) {
         entries.remove(url)

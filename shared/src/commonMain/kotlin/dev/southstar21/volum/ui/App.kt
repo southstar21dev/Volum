@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.lifecycle.compose.LifecycleStartEffect
+import dev.southstar21.volum.ui.components.clearDecodedPhotos
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
@@ -261,6 +262,8 @@ fun VolumApp(app: AppContainer) {
                     }
                 }
                 ForegroundSync(session)
+                // Decoded avatars belong to the account that showed them: a sign-out or switch drops them.
+                LaunchedEffect(session?.user?.id) { clearDecodedPhotos() }
                 RetainLiveHolds(session)
                 OverlayLayer(overlays)
             }
@@ -279,8 +282,12 @@ private fun ForegroundSync(session: UserSession?) {
     if (session == null) return
     LifecycleStartEffect(session) {
         session.sync.foreground = true
+        session.partner.setForeground(true)
         session.app.refreshAuthIfStale()
-        onStopOrDispose { session.sync.foreground = false }
+        onStopOrDispose {
+            session.sync.foreground = false
+            session.partner.setForeground(false)
+        }
     }
 }
 

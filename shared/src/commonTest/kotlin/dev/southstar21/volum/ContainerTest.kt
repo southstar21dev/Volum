@@ -23,6 +23,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
 import kotlinx.io.files.Path
@@ -142,6 +144,25 @@ class ContainerTest {
         assertEquals(pat, partner.snapshot.value.partner)
         assertNull(partner.error.value)
         assertTrue(server.calls >= 2)
+        partner.stop()
+    }
+
+    @Test fun partnerPollPausesInTheBackgroundAndResumesWithAFreshFetch() = runTest {
+        val server = PartnerServer(this)
+        val partner = PartnerRepository(server.pb, tempDir(), backgroundScope)
+
+        partner.start()
+        testScheduler.runCurrent()
+        assertEquals(1, server.calls)
+
+        partner.setForeground(false)
+        testScheduler.advanceTimeBy(5 * 60_000L)
+        testScheduler.runCurrent()
+        assertEquals(1, server.calls, "no polling while the app is in the background")
+
+        partner.setForeground(true)
+        testScheduler.runCurrent()
+        assertEquals(2, server.calls, "coming back fetches at once")
         partner.stop()
     }
 

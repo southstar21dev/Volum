@@ -32,7 +32,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -553,7 +556,7 @@ class UserSession(val app: AppContainer, initialUser: AuthUser, dir: Path) {
 
     val scope = CoroutineScope(SupervisorJob() + app.mainDispatcher + backstop)
     val store = LocalStore(dir, scope, initialUser.id, WRITE_DELAY_MS)
-    val repository = Repository(store, initialUser.id)
+    val repository = Repository(store, initialUser.id) { app.pb.serverNowMillis() }
     val sync = SyncEngine(
         store, app.pb, repository, initialUser.id, scope,
         hasPartner = { partner.snapshot.value.partner != null },
@@ -667,7 +670,30 @@ class PartnerRepository(
         }
     }
 
+    /** Whether [start] was called and [stop] hasn't been since. */
+    private var wanted = false
+
+    /** Whether the app is on screen: the poll and the realtime stream only run while it is. */
+    private var foreground = true
+
     fun start() {
+        wanted = true
+        if (foreground) connect()
+    }
+
+    /**
+     * Tells the repository the app went to the background or came back. Away, the poll and the live
+     * stream stop (they would only keep the radio busy); back, they start again with a fresh fetch.
+     */
+    fun setForeground(on: Boolean) {
+        if (foreground == on) return
+        foreground = on
+        if (!wanted) return
+        if (on) connect() else disconnect()
+    }
+
+    private fun connect() {
+        if (poll != null) return
         poll = scope.launch {
             while (true) {
                 refresh()
@@ -675,7 +701,11 @@ class PartnerRepository(
             }
         }
         // Every workout event lands here, our own syncs included: a burst becomes one refresh.
-        realtime = pb.realtime(scope, listOf("workouts/*")) { _, _ ->
+        realtime = pb.realtime(scope, listOf("workouts/*")) { _, record ->
+            // A screen following one workout (see [subscribe]) shares this stream rather than opening its own.
+            if (record != null && _workoutEvents.subscriptionCount.value > 0) {
+                decodeRecord(Workout.serializer(), record)?.let { _workoutEvents.tryEmit(it) }
+            }
             pending?.cancel()
             pending = scope.launch {
                 kotlinx.coroutines.delay(400)
@@ -686,11 +716,21 @@ class PartnerRepository(
 
     private var pending: kotlinx.coroutines.Job? = null
 
-    fun stop() {
+    private fun disconnect() {
         poll?.cancel()
         realtime?.cancel()
         pending?.cancel()
+        poll = null
+        realtime = null
+        pending = null
     }
+
+    fun stop() {
+        wanted = false
+        disconnect()
+    }
+
+    private val _workoutEvents = MutableSharedFlow<Workout>(extraBufferCapacity = 16, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     /** Fetches the pairing state. Only cancellation escapes; every other failure lands in [error]. */
     suspend fun refresh() {
@@ -709,11 +749,9 @@ class PartnerRepository(
             save(snap)
         } catch (e: CancellationException) {
             throw e
-        } catch (e: PbException) {
+        } catch (e: Exception) {
+            // A PbException, a 2xx body that isn't the expected JSON, or a local write in the cleanup that failed.
             _error.value = partnerErrorMessage(e)
-        } catch (_: Exception) {
-            // A 2xx body that isn't the expected JSON, or a local write in the cleanup that failed.
-            _error.value = "Something went wrong"
         }
     }
 
@@ -744,10 +782,9 @@ class PartnerRepository(
         return decodeRecord(Workout.serializer(), result)
     }
 
-    fun subscribe(scope: CoroutineScope, workoutId: String, onRecord: (Workout) -> Unit) =
-        pb.realtime(scope, listOf("workouts/$workoutId")) { _, record ->
-            record?.let { decodeRecord(Workout.serializer(), it) }?.let(onRecord)
-        }
+    /** Follows [workoutId]'s live changes on the stream [start] opened (nothing arrives while the app is in the background). */
+    fun subscribe(scope: CoroutineScope, workoutId: String, onRecord: (Workout) -> Unit): Job =
+        scope.launch { _workoutEvents.filter { it.id == workoutId }.collect(onRecord) }
 
     private fun mutationJson(m: WorkoutMutation): JsonObject = buildJsonObject {
         when (m) {
@@ -780,11 +817,3 @@ class PartnerRepository(
 
 /** Set fields that can go from a value back to none. */
 private val CLEARABLE_SET_FIELDS = listOf("tag", "note", "seconds")
-
-fun partnerErrorMessage(e: PbException): String = when {
-    e.status == 401 -> "Session expired. Sign in again"
-    e.status == 404 -> "Session ended"
-    (e.status == 400 || e.status == 403) && e.message.isNotBlank() -> e.message
-    e.status == 0 -> "You're offline"
-    else -> "Something went wrong"
-}

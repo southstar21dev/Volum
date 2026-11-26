@@ -472,15 +472,17 @@ class LocalStore(
          * Queues [item] in place of any pending (not rejected) item for the same record: payloads are
          * whole records, so only the newest needs pushing. Its id is above every current one, so an
          * item already being pushed can't share it. It keeps the replaced item's createdAt: the record
-         * has been waiting since its first unsent change, however often it has changed since.
+         * has been waiting since its first unsent change, however often it has changed since, and it
+         * stays [OutboxItem.isNew] if the replaced one was: the record still hasn't been created.
          */
         fun replaceOutbox(collection: String, recordId: String, item: (Long) -> OutboxItem) {
             val list = obW()
             val next = (list.maxOfOrNull { it.id } ?: 0L) + 1
             val pending: (OutboxItem) -> Boolean = { !it.failed && it.collection == collection && it.recordId == recordId }
             val since = list.firstOrNull(pending)?.createdAt
+            val wasNew = list.any { pending(it) && it.isNew }
             list.removeAll(pending)
-            val made = item(next)
+            val made = item(next).let { if (wasNew && !it.isNew) it.copy(isNew = true) else it }
             list.add(if (since != null) made.copy(createdAt = since) else made)
         }
 

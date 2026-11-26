@@ -376,7 +376,10 @@ fun SessionScreen(workoutId: String) {
         else finish(saveOrder = false)
     }
     val library = remember(exercises) { exercises.values.filter { !it.deleted } }
-    val lastLabels = remember(workouts) { repo.lastTopSetLabels(workout.entries.map { it.exerciseId to it.isTimed }) }
+    // Keyed on what the labels are made of: the exercises shown and the history (lastEntries() is the
+    // same map until a completed workout changes), not on every set tapped in the active workout.
+    val shownExercises = workout.entries.map { it.exerciseId to it.isTimed }
+    val lastLabels = remember(repo.lastEntries(), shownExercises) { repo.lastTopSetLabels(shownExercises) }
 
     val actions = EntryActions(
         onSet = { entry, set -> save(replaceSet(entry, set)) },
@@ -662,7 +665,10 @@ fun <T> AnimatedItems(items: List<T>, key: (T) -> String, itemModifier: (T) -> M
     order[0] = merged
     // The transition states are snapshot state: moved to where they may be written, after composition.
     SideEffect {
-        states.keys.retainAll(merged.toSet())
+        val shown = merged.toSet()
+        states.keys.retainAll(shown)
+        // Items that have folded away are forgotten, so they aren't held in memory for the screen's life.
+        last.keys.retainAll(shown)
         for ((id, st) in states) st.targetState = id in ids
     }
     merged.forEach { id ->

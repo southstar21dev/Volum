@@ -7,15 +7,26 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asSkiaBitmap
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.useContents
 import kotlinx.cinterop.usePinned
 import org.jetbrains.skia.EncodedImageFormat
+import org.jetbrains.skia.Bitmap
+import org.jetbrains.skia.ColorAlphaType
+import org.jetbrains.skia.ColorType
 import org.jetbrains.skia.Image
+import org.jetbrains.skia.ImageInfo
 import platform.CoreGraphics.CGRectMake
-import platform.CoreGraphics.CGSizeMake
-import platform.Foundation.NSData
+import platform.CoreGraphics.CGBitmapContextCreate
+import platform.CoreGraphics.kCGBitmapByteOrder32Little
+import platform.CoreGraphics.CGColorSpaceCreateDeviceRGB
+import platform.CoreGraphics.CGColorSpaceRelease
+import platform.CoreGraphics.CGContextRelease
+import platform.CoreGraphics.CGContextScaleCTM
+import platform.CoreGraphics.CGContextTranslateCTM
+import platform.CoreGraphics.CGImageAlphaInfo
 import platform.PhotosUI.PHPickerConfiguration
 import platform.PhotosUI.PHPickerFilter
 import platform.PhotosUI.PHPickerResult
@@ -25,20 +36,19 @@ import platform.UIKit.UIApplication
 import platform.UIKit.UIWindow
 import platform.UIKit.UIWindowScene
 import platform.UIKit.UISceneActivationStateForegroundActive
-import platform.UIKit.UIGraphicsImageRenderer
-import platform.UIKit.UIGraphicsImageRendererFormat
+import platform.UIKit.UIGraphicsPopContext
+import platform.UIKit.UIGraphicsPushContext
 import platform.UIKit.UIImage
 import platform.UIKit.UIViewController
 import platform.darwin.NSObject
 import platform.darwin.dispatch_async
 import platform.darwin.dispatch_get_main_queue
-import platform.posix.memcpy
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
 @Composable
-actual fun rememberPhotoPicker(onPicked: (ByteArray) -> Unit, onError: () -> Unit): () -> Unit {
+actual fun rememberPhotoPicker(onPicked: (ImageBitmap) -> Unit, onError: () -> Unit): () -> Unit {
     val picked by rememberUpdatedState(onPicked)
     val failed by rememberUpdatedState(onError)
     // Held here: the picker keeps only a weak reference to its delegate.
@@ -54,7 +64,7 @@ actual fun encodeJpeg(bitmap: ImageBitmap, quality: Int): ByteArray =
         ?: error("JPEG encoding failed")
 
 private class PhotoPickerDelegate(
-    private val onPicked: (ByteArray) -> Unit,
+    private val onPicked: (ImageBitmap) -> Unit,
     private val onError: () -> Unit,
 ) : NSObject(), PHPickerViewControllerDelegateProtocol {
     private var disposed = false
@@ -77,10 +87,10 @@ private class PhotoPickerDelegate(
         val result = didFinishPicking.firstOrNull() as? PHPickerResult ?: return
         // Data, not a UIImage: UIImage(data:) reads HEIC and JPEG alike and keeps the EXIF orientation.
         result.itemProvider.loadDataRepresentationForTypeIdentifier("public.image") { data, _ ->
-            val bytes = data?.let { UIImage(data = it) }?.let(::scaledJpeg)
+            val photo = data?.let { UIImage(data = it) }?.let(::scaledBitmap)
             dispatch_async(dispatch_get_main_queue()) {
                 if (disposed) return@dispatch_async
-                if (bytes != null) onPicked(bytes) else onError()
+                if (photo != null) onPicked(photo) else onError()
             }
         }
     }
@@ -96,28 +106,39 @@ private fun topViewController(): UIViewController? {
     return top
 }
 
-/** [image] drawn upright, at most [PICKED_PHOTO_MAX_PX] on its long side, as JPEG. */
+/**
+ * [image] drawn upright, at most [PICKED_PHOTO_MAX_PX] on its long side, into a bitmap the crop screen
+ * can use directly (no JPEG round trip).
+ */
 @OptIn(ExperimentalForeignApi::class)
-private fun scaledJpeg(image: UIImage): ByteArray? {
+private fun scaledBitmap(image: UIImage): ImageBitmap? {
     val (width, height) = image.size.useContents { width to height }
     if (width <= 0.0 || height <= 0.0) return null
     val scale = min(1.0, PICKED_PHOTO_MAX_PX / max(width, height))
-    val w = max(1.0, floor(width * scale))
-    val h = max(1.0, floor(height * scale))
-    val format = UIGraphicsImageRendererFormat()
-    format.scale = 1.0
-    format.opaque = true
-    val renderer = UIGraphicsImageRenderer(size = CGSizeMake(w, h), format = format)
-    // Drawing applies imageOrientation, so the JPEG comes out upright with no EXIF to honour.
-    val data = renderer.JPEGDataWithCompressionQuality(0.9) { _ -> image.drawInRect(CGRectMake(0.0, 0.0, w, h)) }
-    return data.toByteArray()
-}
-
-@OptIn(ExperimentalForeignApi::class)
-private fun NSData.toByteArray(): ByteArray? {
-    val size = length.toInt()
-    if (size == 0) return null
-    val out = ByteArray(size)
-    out.usePinned { memcpy(it.addressOf(0), bytes, length) }
-    return out
+    val w = max(1.0, floor(width * scale)).toInt()
+    val h = max(1.0, floor(height * scale)).toInt()
+    val pixels = ByteArray(w * h * 4)
+    val drawn = pixels.usePinned { pinned ->
+        val space = CGColorSpaceCreateDeviceRGB()
+        // BGRA, premultiplied: the layout Skia's BGRA_8888 expects.
+        val context = CGBitmapContextCreate(
+            pinned.addressOf(0), w.toULong(), h.toULong(), 8u, (w * 4).toULong(), space,
+            CGImageAlphaInfo.kCGImageAlphaPremultipliedFirst.value or kCGBitmapByteOrder32Little,
+        )
+        CGColorSpaceRelease(space)
+        if (context == null) return@usePinned false
+        // UIKit draws from the top left, a raw bitmap context from the bottom left: flip it.
+        CGContextTranslateCTM(context, 0.0, h.toDouble())
+        CGContextScaleCTM(context, 1.0, -1.0)
+        UIGraphicsPushContext(context)
+        // Drawing applies imageOrientation, so the pixels come out upright.
+        image.drawInRect(CGRectMake(0.0, 0.0, w.toDouble(), h.toDouble()))
+        UIGraphicsPopContext()
+        CGContextRelease(context)
+        true
+    }
+    if (!drawn) return null
+    val bitmap = Bitmap()
+    if (!bitmap.installPixels(ImageInfo(w, h, ColorType.BGRA_8888, ColorAlphaType.PREMUL), pixels, w * 4)) return null
+    return Image.makeFromBitmap(bitmap).toComposeImageBitmap()
 }

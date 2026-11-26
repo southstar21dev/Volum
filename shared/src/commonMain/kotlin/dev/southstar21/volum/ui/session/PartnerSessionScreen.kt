@@ -113,7 +113,7 @@ fun PartnerSessionScreen(workoutId: String) {
     // Any failure, not just the server's: one escaping into this screen's scope would crash the app.
     fun fail(e: Exception) {
         if (e is PbException && e.status == 404) ended = true
-        else error = if (e is PbException) partnerErrorMessage(e) else "Something went wrong"
+        else error = partnerErrorMessage(e)
     }
 
     suspend fun load() {

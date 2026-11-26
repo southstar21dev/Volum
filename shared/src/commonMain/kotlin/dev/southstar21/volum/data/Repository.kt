@@ -14,25 +14,35 @@ import dev.southstar21.volum.model.WorkoutEntry
 import dev.southstar21.volum.model.WorkoutStatus
 import dev.southstar21.volum.util.formatSeconds
 import dev.southstar21.volum.util.formatWeight
+import dev.southstar21.volum.util.isoOf
 import dev.southstar21.volum.util.newId
+import dev.southstar21.volum.util.nowMillis
 import dev.southstar21.volum.util.nowIso
 import dev.southstar21.volum.util.plural
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 
 /** Every local write: saved to the store, queued for PocketBase, and announced so sync runs soon. */
-class Repository(val store: LocalStore, val owner: String) {
+class Repository(
+    val store: LocalStore,
+    val owner: String,
+    /** The time (epoch ms) set edits are stamped with: the server's clock as best known, see [PocketBase.serverNowMillis]. */
+    private val stampClock: () -> Long = ::nowMillis,
+) {
     private val _writes = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     val writes: SharedFlow<Unit> = _writes
 
     private fun <T> payload(serializer: KSerializer<T>, value: T): JsonObject =
         VolumJson.encodeToJsonElement(serializer, value).jsonObject
 
-    private fun LocalStore.Tx.queue(collection: Collection, recordId: String, payload: JsonObject) {
-        replaceOutbox(collection.wire, recordId) { id -> OutboxItem(id = id, collection = collection.wire, recordId = recordId, payload = payload, createdAt = nowIso()) }
+    /** [isNew]: the record is being created, so the push can POST it without trying a PATCH first. */
+    private fun LocalStore.Tx.queue(collection: Collection, recordId: String, payload: JsonObject, isNew: Boolean = false) {
+        replaceOutbox(collection.wire, recordId) { id -> OutboxItem(id = id, collection = collection.wire, recordId = recordId, payload = payload, createdAt = nowIso(), isNew = isNew) }
     }
 
     private fun announce() { _writes.tryEmit(Unit) }
@@ -56,7 +66,7 @@ class Repository(val store: LocalStore, val owner: String) {
                 deleted = existing?.deleted ?: false,
             )
             putExercise(record)
-            queue(Collection.Exercises, record.id, payload(Exercise.serializer(), record.copy(updated = null)))
+            queue(Collection.Exercises, record.id, payload(Exercise.serializer(), record.copy(updated = null)), isNew = existing == null)
             record
         }
         if (record.owner == owner) announce()
@@ -131,7 +141,7 @@ class Repository(val store: LocalStore, val owner: String) {
                 deleted = existing?.deleted ?: false,
             )
             putRoutine(record)
-            queue(Collection.Routines, record.id, payload(Routine.serializer(), record.copy(updated = null)))
+            queue(Collection.Routines, record.id, payload(Routine.serializer(), record.copy(updated = null)), isNew = existing == null)
             record
         }
         if (record.owner == owner) announce()
@@ -164,7 +174,11 @@ class Repository(val store: LocalStore, val owner: String) {
         entries: List<WorkoutEntry>,
         basis: List<WorkoutEntry>? = null,
     ): Workout {
-        val record = store.transaction { writeWorkout(id, routineId, routineName, startedAt, finishedAt, status, entries, basis) }
+        // Rebasing, stamping and encoding a big workout is CPU work: the whole transaction (taking its
+        // lock included) runs off the calling thread. It is still one transaction, so edits stay serial.
+        val record = withContext(Dispatchers.Default) {
+            store.transaction { writeWorkout(id, routineId, routineName, startedAt, finishedAt, status, entries, basis) }
+        }
         announce()
         return record
     }
@@ -196,13 +210,13 @@ class Repository(val store: LocalStore, val owner: String) {
             startedAt = startedAt ?: existing?.startedAt ?: now,
             finishedAt = finishedAt ?: existing?.finishedAt,
             status = status ?: existing?.status ?: WorkoutStatus.Active,
-            entries = stampChangedSets(existing?.entries, if (active != null) withRemovedSets(active.entries, entries) else entries, now),
+            entries = stampChangedSets(existing?.entries, if (active != null) withRemovedSets(active.entries, entries) else entries, isoOf(stampClock())),
             removedEntryIds = if (active != null) removedEntries(active, entries) else existing?.removedEntryIds,
             updatedAt = now,
             deleted = existing?.deleted ?: false,
         )
         putWorkout(record)
-        queue(Collection.Workouts, record.id, payload(Workout.serializer(), record.copy(updated = null)))
+        queue(Collection.Workouts, record.id, payload(Workout.serializer(), record.copy(updated = null)), isNew = existing == null)
         return record
     }
 
@@ -212,7 +226,7 @@ class Repository(val store: LocalStore, val owner: String) {
      * captured by the screen would make them overwrite each other. Does nothing if the workout or set is gone.
      */
     suspend fun mutateSet(workoutId: String, entryId: String, setId: String, change: (SetEntry) -> SetEntry) {
-        val saved = store.transaction {
+        val saved = withContext(Dispatchers.Default) { store.transaction {
             val existing = workouts[workoutId] ?: return@transaction false
             val next = existing.entries.map { e ->
                 if (e.id == entryId) e.copy(sets = e.sets.map { if (it.id == setId) change(it) else it }) else e
@@ -220,7 +234,7 @@ class Repository(val store: LocalStore, val owner: String) {
             if (next == existing.entries) return@transaction false
             writeWorkout(workoutId, null, existing.routineName, null, null, null, next, existing.entries)
             true
-        }
+        } }
         if (saved) announce()
     }
 
