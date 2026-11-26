@@ -19,7 +19,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -29,6 +32,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.io.files.Path
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
@@ -41,6 +46,8 @@ class PartnerRepository(
     private val scope: CoroutineScope,
     /** Where the cached snapshot is read and written; tests pass a test dispatcher. */
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** The signed-in user's id: events about their own workouts are not worth a refresh. */
+    private val userId: String = "",
     /** Called when the partner is gained, lost or replaced, before the new snapshot is saved. */
     private val onPartnerChanged: suspend (previous: PartnerUser?, current: PartnerUser?) -> Unit = { _, _ -> },
 ) {
@@ -96,17 +103,27 @@ class PartnerRepository(
                 kotlinx.coroutines.delay(30_000)
             }
         }
-        // Every workout event lands here, our own syncs included: a burst becomes one refresh.
-        realtime = pb.realtime(scope, listOf("workouts/*")) { _, record ->
-            // A screen following one workout (see [subscribe]) shares this stream rather than opening its own.
-            if (record != null && _workoutEvents.subscriptionCount.value > 0) {
-                decodeRecord(Workout.serializer(), record)?.let { _workoutEvents.tryEmit(it) }
+        // The live stream only matters while there is a partner to follow: without one it would wake the
+        // radio for nothing. (The poll above stays: it is how an incoming pair request is found.)
+        realtime = scope.launch {
+            _snapshot.map { it.partner != null }.distinctUntilChanged().collectLatest { paired ->
+                if (paired) pb.realtime(this, listOf("workouts/*")) { _, record -> onWorkoutEvent(record) }
             }
-            pending?.cancel()
-            pending = scope.launch {
-                kotlinx.coroutines.delay(400)
-                refresh()
-            }
+        }
+    }
+
+    /** One workout changed. A burst of events becomes one refresh. */
+    private fun onWorkoutEvent(record: JsonObject?) {
+        // The user's own workouts (their syncs, a partner's edit of them) change nothing the pairing state or the partner screen shows.
+        if (record != null && userId.isNotEmpty() && record["owner"]?.let { (it as? JsonPrimitive)?.contentOrNull } == userId) return
+        // A screen following one workout (see [subscribe]) shares this stream rather than opening its own.
+        if (record != null && _workoutEvents.subscriptionCount.value > 0) {
+            decodeRecord(Workout.serializer(), record)?.let { _workoutEvents.tryEmit(it) }
+        }
+        pending?.cancel()
+        pending = scope.launch {
+            delay(400)
+            refresh()
         }
     }
 

@@ -34,7 +34,7 @@ class UserSession(val app: AppContainer, initialUser: AuthUser, dir: Path) {
         beforePush = { app.ensureFreshAuth() },
         authStillValid = { app.authStillValid() },
     ) { app.onAuthExpired(this@UserSession) }
-    val partner = PartnerRepository(app.pb, dir, scope, app.ioDispatcher) { previous, current -> onPartnerChanged(previous, current) }
+    val partner = PartnerRepository(app.pb, dir, scope, app.ioDispatcher, initialUser.id) { previous, current -> onPartnerChanged(previous, current) }
 
     suspend fun open() {
         store.load()
