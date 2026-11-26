@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.compose.multiplatform)
     alias(libs.plugins.android.kmp.library)
+    alias(libs.plugins.detekt)
 }
 
 composeCompiler {
@@ -119,4 +120,30 @@ kotlin {
 
 compose.resources {
     packageOfResClass = "dev.southstar21.volum.resources"
+}
+
+detekt {
+    config.setFrom(rootProject.file("config/detekt/detekt.yml"))
+    buildUponDefaultConfig = true
+}
+
+// In a multiplatform module the plain `detekt` task has no sources: detekt makes one task per source
+// set instead, each with its own baseline (they would overwrite a shared file).
+tasks.withType<dev.detekt.gradle.Detekt>().configureEach {
+    baseline.set(layout.projectDirectory.file("detekt-baselines/$name.xml"))
+}
+tasks.withType<dev.detekt.gradle.DetektCreateBaselineTask>().configureEach {
+    baseline.set(layout.projectDirectory.file("detekt-baselines/${name.replace("detektBaseline", "detekt")}.xml"))
+}
+
+val detektSourceSets = listOf("CommonMain", "CommonTest", "AndroidMain", "IosMain").map { "detekt${it}SourceSet" }
+tasks.register("detektAll") {
+    group = "verification"
+    description = "Runs detekt on every source set of this module that has code."
+    dependsOn(detektSourceSets)
+}
+tasks.register("detektBaselineAll") {
+    group = "verification"
+    description = "Regenerates the detekt baselines of every source set that has code."
+    dependsOn(detektSourceSets.map { it.replace("detekt", "detektBaseline") })
 }

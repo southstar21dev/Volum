@@ -14,6 +14,7 @@ core-splashscreen = "1.2.0"
 ktor = "3.6.1"
 backdrop = "2.0.1"
 kyant-shapes = "1.2.1"
+detekt = "2.0.0-alpha.6"
 android-compileSdk = "37"
 android-targetSdk = "37"
 android-minSdk = "26"
@@ -49,4 +50,5 @@ kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", versi
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }
 android-application = { id = "com.android.application", version.ref = "agp" }
+detekt = { id = "dev.detekt", version.ref = "detekt" }
 android-kmp-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }

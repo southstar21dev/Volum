@@ -1,0 +1,34 @@
+# Built on detekt's default config (buildUponDefaultConfig); only the differences are listed.
+# Existing findings live in each module's detekt-baseline.xml, so new code is held to the rules.
+
+naming:
+  FunctionNaming:
+    ignoreAnnotated: ['Composable']
+  TopLevelPropertyNaming:
+    constantPattern: '[A-Z][A-Za-z0-9_]*'
+
+style:
+  MagicNumber:
+    active: false
+  MaxLineLength:
+    maxLineLength: 140
+  ReturnCount:
+    max: 4
+  UnusedPrivateProperty:
+    ignoreAnnotated: ['Preview']
+  UnusedPrivateFunction:
+    ignoreAnnotated: ['Preview']
+
+complexity:
+  LongMethod:
+    ignoreAnnotated: ['Composable']
+  LongParameterList:
+    ignoreAnnotated: ['Composable']
+  CyclomaticComplexMethod:
+    ignoreAnnotated: ['Composable']
+  CognitiveComplexMethod:
+    ignoreAnnotated: ['Composable']
+  TooManyFunctions:
+    active: false
+  LargeClass:
+    active: false

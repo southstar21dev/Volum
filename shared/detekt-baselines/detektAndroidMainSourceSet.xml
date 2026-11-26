@@ -1,0 +1,15 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>CyclomaticComplexMethod:Photos.android.kt:private fun decodeLegacy: Bitmap?</ID>
+    <ID>MatchingDeclarationName:Platform.android.kt:AndroidPlatform</ID>
+    <ID>MaxLineLength:AndroidDock.android.kt:Modifier.size(62.dp).tappable(haptic = true, onClick = onAction).liquidGlass(CircleShape).semantics { contentDescription = "New routine" }</ID>
+    <ID>MaxLineLength:AndroidDock.android.kt:alpha.animateTo(if (visible) 1f else 0f, if (visible) tween(Durations.Enter, easing = Easings.Enter) else tween(Durations.Exit, easing = Easings.Exit))</ID>
+    <ID>MaxLineLength:LiquidTabs.kt:fun</ID>
+    <ID>MaxLineLength:Photos.android.kt:if (scale &lt; 1f) decoder.setTargetSize((info.size.width * scale).roundToInt().coerceAtLeast(1), (info.size.height * scale).roundToInt().coerceAtLeast(1))</ID>
+    <ID>MaxLineLength:Photos.android.kt:val</ID>
+    <ID>MaxLineLength:Photos.android.kt:val sampled = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) } ?: return null</ID>
+    <ID>TooGenericExceptionCaught:SecureStore.android.kt:SecureStore$e: Exception</ID>
+  </CurrentIssues>
+</SmellBaseline>

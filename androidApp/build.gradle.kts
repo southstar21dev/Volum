@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
+    alias(libs.plugins.detekt)
 }
 
 // The release workflow writes the version semantic-release chose into gradle.properties.
@@ -94,4 +95,9 @@ dependencies {
     implementation(libs.compose.ui)
     // Renders the @Preview composables in shared's commonMain.
     debugImplementation(libs.compose.ui.tooling)
+}
+
+detekt {
+    config.setFrom(rootProject.file("config/detekt/detekt.yml"))
+    buildUponDefaultConfig = true
 }
