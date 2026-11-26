@@ -1,0 +1,889 @@
+[
+  {
+    "name": "owner edit newer than the stored set wins",
+    "server": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:05.000Z"
+      }
+    ],
+    "snapshot": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 10,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:40.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:40.000Z"
+      }
+    ],
+    "snapshotAt": "2026-01-01T10:00:20.000Z",
+    "expected": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 10,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:40.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:40.000Z"
+      }
+    ]
+  },
+  {
+    "name": "partner edit newer than the owner's set wins",
+    "server": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 12,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:50.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:50.000Z"
+      }
+    ],
+    "snapshot": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:10.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:10.000Z"
+      }
+    ],
+    "snapshotAt": "2026-01-01T10:00:20.000Z",
+    "expected": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 12,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:50.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:50.000Z"
+      }
+    ]
+  },
+  {
+    "name": "a set the partner added after the snapshot is kept",
+    "server": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          },
+          {
+            "id": "s2",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 6,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:45.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:45.000Z"
+      }
+    ],
+    "snapshot": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:05.000Z"
+      }
+    ],
+    "snapshotAt": "2026-01-01T10:00:30.000Z",
+    "expected": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          },
+          {
+            "id": "s2",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 6,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:45.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:45.000Z"
+      }
+    ]
+  },
+  {
+    "name": "a stored set older than the snapshot that the owner no longer has stays gone",
+    "server": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          },
+          {
+            "id": "s2",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 6,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:10.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:10.000Z"
+      }
+    ],
+    "snapshot": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:12.000Z"
+      }
+    ],
+    "snapshotAt": "2026-01-01T10:00:30.000Z",
+    "expected": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:12.000Z"
+      }
+    ]
+  },
+  {
+    "name": "a set the partner removed stays removed",
+    "server": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [],
+        "updatedAt": "2026-01-01T10:00:40.000Z",
+        "removedSetIds": [
+          "s1"
+        ]
+      }
+    ],
+    "snapshot": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          },
+          {
+            "id": "s2",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:05.000Z"
+      }
+    ],
+    "snapshotAt": "2026-01-01T10:00:30.000Z",
+    "expected": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s2",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:40.000Z",
+        "removedSetIds": [
+          "s1"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "removed set ids of both sides are combined without repeats",
+    "server": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [],
+        "updatedAt": "2026-01-01T10:00:40.000Z",
+        "removedSetIds": [
+          "s1"
+        ]
+      }
+    ],
+    "snapshot": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s2",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:05.000Z",
+        "removedSetIds": [
+          "s1",
+          "s2"
+        ]
+      }
+    ],
+    "snapshotAt": "2026-01-01T10:00:30.000Z",
+    "expected": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [],
+        "updatedAt": "2026-01-01T10:00:40.000Z",
+        "removedSetIds": [
+          "s1",
+          "s2"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "an exercise the owner removed is not brought back",
+    "server": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:05.000Z"
+      },
+      {
+        "id": "e2",
+        "exerciseId": "ex-e2",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s2",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:05.000Z"
+      }
+    ],
+    "snapshot": [
+      {
+        "id": "e2",
+        "exerciseId": "ex-e2",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s2",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:05.000Z"
+      }
+    ],
+    "snapshotAt": "2026-01-01T10:00:30.000Z",
+    "expected": [
+      {
+        "id": "e2",
+        "exerciseId": "ex-e2",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s2",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:05.000Z"
+      }
+    ],
+    "removedEntryIds": [
+      "e1"
+    ]
+  },
+  {
+    "name": "an exercise the partner added after the snapshot is kept, after the owner's",
+    "server": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:05.000Z"
+      },
+      {
+        "id": "e9",
+        "exerciseId": "ex-e9",
+        "name": "Row",
+        "sets": [
+          {
+            "id": "s9",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:45.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:45.000Z"
+      }
+    ],
+    "snapshot": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:05.000Z"
+      }
+    ],
+    "snapshotAt": "2026-01-01T10:00:30.000Z",
+    "expected": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:05.000Z"
+      },
+      {
+        "id": "e9",
+        "exerciseId": "ex-e9",
+        "name": "Row",
+        "sets": [
+          {
+            "id": "s9",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:45.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:45.000Z"
+      }
+    ]
+  },
+  {
+    "name": "an old stored exercise missing from the snapshot is dropped",
+    "server": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:05.000Z"
+      },
+      {
+        "id": "e8",
+        "exerciseId": "ex-e8",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s8",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:06.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:06.000Z"
+      }
+    ],
+    "snapshot": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:05.000Z"
+      }
+    ],
+    "snapshotAt": "2026-01-01T10:00:30.000Z",
+    "expected": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:05.000Z"
+      }
+    ]
+  },
+  {
+    "name": "an exercise only the owner has passes through untouched",
+    "server": [],
+    "snapshot": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false
+          }
+        ],
+        "note": "warm up first"
+      }
+    ],
+    "snapshotAt": "2026-01-01T10:00:30.000Z",
+    "expected": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false
+          }
+        ],
+        "note": "warm up first"
+      }
+    ]
+  },
+  {
+    "name": "the owner's note survives when the partner's rename wins the header",
+    "server": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Incline Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:50.000Z"
+      }
+    ],
+    "snapshot": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:10.000Z",
+        "note": "felt heavy"
+      }
+    ],
+    "snapshotAt": "2026-01-01T10:00:30.000Z",
+    "expected": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Incline Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:50.000Z",
+        "note": "felt heavy"
+      }
+    ]
+  },
+  {
+    "name": "a note the owner cleared is not brought back by the stored header",
+    "server": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Incline Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:50.000Z",
+        "note": "old note"
+      }
+    ],
+    "snapshot": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:10.000Z"
+      }
+    ],
+    "snapshotAt": "2026-01-01T10:00:30.000Z",
+    "expected": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Incline Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:50.000Z"
+      }
+    ]
+  },
+  {
+    "name": "a stored skip wins the header when it is newer than the owner's copy",
+    "server": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:50.000Z",
+        "skipped": true
+      }
+    ],
+    "snapshot": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:10.000Z"
+      }
+    ],
+    "snapshotAt": "2026-01-01T10:00:30.000Z",
+    "expected": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:05.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:50.000Z",
+        "skipped": true
+      }
+    ]
+  },
+  {
+    "name": "PocketBase style space separated times compare like ISO ones",
+    "server": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 12,
+            "done": false,
+            "updatedAt": "2026-01-01 10:00:50.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:50.000Z"
+      }
+    ],
+    "snapshot": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 8,
+            "done": false,
+            "updatedAt": "2026-01-01T10:00:10.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:10.000Z"
+      }
+    ],
+    "snapshotAt": "2026-01-01T10:00:20.000Z",
+    "expected": [
+      {
+        "id": "e1",
+        "exerciseId": "ex-e1",
+        "name": "Bench",
+        "sets": [
+          {
+            "id": "s1",
+            "weight": 50,
+            "unit": "kg",
+            "reps": 12,
+            "done": false,
+            "updatedAt": "2026-01-01 10:00:50.000Z"
+          }
+        ],
+        "updatedAt": "2026-01-01T10:00:50.000Z"
+      }
+    ]
+  }
+]
