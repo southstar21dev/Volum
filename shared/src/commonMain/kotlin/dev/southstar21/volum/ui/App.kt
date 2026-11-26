@@ -52,7 +52,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.lifecycle.compose.LifecycleStartEffect
 import dev.southstar21.volum.ui.components.clearDecodedPhotos
-import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
@@ -95,6 +94,7 @@ import dev.southstar21.volum.ui.theme.VolumTheme
 import dev.southstar21.volum.ui.theme.tappable
 import dev.southstar21.volum.ui.today.TodayScreen
 import dev.southstar21.volum.ui.update.UpdateRequiredScreen
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 
