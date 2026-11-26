@@ -44,6 +44,8 @@ function bundleVersions(tag) {
   const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?$/.exec(tag);
   if (!match) return null;
   const [major, minor, patch, rc] = match.slice(1).map((part) => (part === undefined ? undefined : Number(part)));
+  // Same bounds as androidApp's versionCode, so the build number stays unique and ordered.
+  if (minor >= 100 || patch >= 100 || (rc ?? 0) >= 99) return null;
   return {
     version: `${major}.${minor}.${patch}`,
     buildVersion: String((major * 10_000 + minor * 100 + patch) * 100 + (rc ?? 99)),
