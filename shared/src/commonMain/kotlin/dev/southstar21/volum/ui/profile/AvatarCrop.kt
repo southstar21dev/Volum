@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +60,7 @@ import dev.southstar21.volum.ui.theme.Icons
 import dev.southstar21.volum.ui.theme.Semibold
 import dev.southstar21.volum.ui.theme.T
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.ExperimentalResourceApi
 import org.jetbrains.compose.resources.decodeToImageBitmap
@@ -154,6 +156,9 @@ internal fun AvatarCropScreen(
     }
     // The crop as laid out now; Save reads it. Replaced when the photo or the circle's size changes.
     var view by remember(photo) { mutableStateOf<CropView?>(null) }
+    // Scaling a big photo takes a moment: done off the main thread, one render at a time.
+    val scope = rememberCoroutineScope()
+    var rendering by remember { mutableStateOf(false) }
 
     Overlay {
         BackHandler { if (!busy) onCancel() }
@@ -215,9 +220,19 @@ internal fun AvatarCropScreen(
                 Txt("Drag to move, pinch to zoom", size = T.Label, color = OnDarkMute)
                 error?.let { Txt(it, size = T.Label, weight = Semibold, color = OnDarkError, align = TextAlign.Center) }
                 Spacer(Modifier.height(2.dp))
-                PrimaryButton("Save photo", enabled = image is ImageLoad.Ready, busy = busy) {
+                PrimaryButton("Save photo", enabled = image is ImageLoad.Ready, busy = busy || rendering) {
                     val crop = view ?: return@PrimaryButton
-                    onSave(renderCrop(crop.bitmap, cropRect(crop.frame, crop.bitmap.width, crop.bitmap.height, crop.circle)))
+                    if (rendering) return@PrimaryButton
+                    rendering = true
+                    val rect = cropRect(crop.frame, crop.bitmap.width, crop.bitmap.height, crop.circle)
+                    scope.launch {
+                        try {
+                            val rendered = withContext(Dispatchers.Default) { renderCrop(crop.bitmap, rect) }
+                            onSave(rendered)
+                        } finally {
+                            rendering = false
+                        }
+                    }
                 }
                 TextButton("Choose another", color = OnDarkMute) { if (!busy) onChooseAnother() }
             }

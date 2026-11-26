@@ -156,6 +156,8 @@ fun LiftsScreen() {
     val shaped = remember(series) { series.mapValues { (_, points) -> latestShape(points) } }
     val lastEntries = remember(workouts) { session.repository.lastEntries() }
     val live = remember(exercises) { exercises.values.filter { !it.deleted } }
+    // Each lift's last top set, worked out once per data change rather than per row per recomposition.
+    val labels = remember(lastEntries, live) { live.associate { ex -> ex.id to lastEntries[ex.id]?.let { lastTopSetLabel(it.sets, it.isTimed) } } }
     val visible = remember(live, query, sort, series) {
         val matching = live.filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
         when (sort) {
@@ -244,7 +246,7 @@ fun LiftsScreen() {
                                 androidx.compose.runtime.key(ex.id) {
                                     if (i > 0) Divider(inset = 14.dp)
                                     val points = shaped[ex.id]?.second.orEmpty()
-                                    val label = lastEntries[ex.id]?.let { lastTopSetLabel(it.sets, it.isTimed) }
+                                    val label = labels[ex.id]
                                     Row(
                                         Modifier.fillMaxWidth().tappable { nav.push(Route.ExerciseDetail(ex.id)) }.padding(horizontal = 14.dp, vertical = 11.dp),
                                         verticalAlignment = Alignment.CenterVertically,
@@ -397,53 +399,60 @@ fun ExerciseDetailScreen(exerciseId: String) {
 
     fun display(kg: Double): Double = if (timed) kg else convert(kg, WeightUnit.Kg, unit)
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        TopInset(10.dp)
-        Toolbar(
-            leading = { CircleButton(Icons.ChevronLeft, "Back") { nav.pop() } },
-            trailing = { if (exercise != null && exercise.owner == session.user.id) CircleButton(Icons.More, "More options for $name") { menu = true } },
-        )
-        ScreenTitle(name, Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp))
-        val pr = if (bodyweight) series.maxByOrNull { it.reps } else series.maxByOrNull { it.value }
-        val latest = series.lastOrNull()
-        val previous = series.dropLast(1).lastOrNull()
-        Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp).height(androidx.compose.foundation.layout.IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatCard(
-                if (timed) "Longest hold" else "Personal record",
-                pr?.let { if (timed) formatSeconds(it.value.toInt()) else if (bodyweight) "${it.reps}" else formatWeightValue(display(it.value)) } ?: "-",
-                if (timed) "" else if (bodyweight) "reps" else unit.label,
-                pr?.let { if (timed || bodyweight) shortDate(it.time) else "${it.reps} reps, ${shortDate(it.time)}" },
-                null,
-                Modifier.weight(1f).fillMaxHeight(),
+    val sessions = remember(own) { own.filter { it.finishedAt != null && !it.deleted && it.entries.any { e -> e.exerciseId == exerciseId && !e.isSkipped } }.sortedByDescending { workoutTime(it) } }
+    // Lazy: only the session cards on screen are composed. Each is its own card, so nothing is stitched.
+    LazyColumn(Modifier.fillMaxSize()) {
+        item(key = "header") {
+            Column {
+            TopInset(10.dp)
+            Toolbar(
+                leading = { CircleButton(Icons.ChevronLeft, "Back") { nav.pop() } },
+                trailing = { if (exercise != null && exercise.owner == session.user.id) CircleButton(Icons.More, "More options for $name") { menu = true } },
             )
-            val delta = if (latest != null && previous != null) { if (bodyweight) (latest.reps - previous.reps).toDouble() else latest.value - previous.value } else null
-            StatCard(
-                if (timed) "Latest hold" else "Latest top set",
-                latest?.let { if (timed) formatSeconds(it.value.toInt()) else if (bodyweight) "${it.reps}" else formatWeightValue(display(it.value)) } ?: "-",
-                if (timed) "" else if (bodyweight) "reps" else unit.label,
-                null,
-                delta?.takeIf { abs(it) > 0.01 }?.let { d -> (if (d > 0) "+" else "−") + if (timed) "${abs(d).toInt()} s" else if (bodyweight) plural(abs(d).toInt(), "rep") else "${formatWeightValue(abs(display(d)))} ${unit.label}" },
-                Modifier.weight(1f).fillMaxHeight(),
-            )
-        }
-        GlassCard(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp).fillMaxWidth(), padding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
-            Segmented(ChartRange.entries.map { it.label }, range.ordinal, { range = ChartRange.entries[it] }, Modifier.fillMaxWidth(), height = 36.dp, fill = true)
-            Spacer(Modifier.height(14.dp))
-            if (shown.isEmpty()) {
-                Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) { Mute("Log a session to see your trend.") }
-            } else {
-                ProgressChart(shown, timed, bodyweight, unit)
+            ScreenTitle(name, Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp))
+            val pr = if (bodyweight) series.maxByOrNull { it.reps } else series.maxByOrNull { it.value }
+            val latest = series.lastOrNull()
+            val previous = series.dropLast(1).lastOrNull()
+            Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp).height(androidx.compose.foundation.layout.IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatCard(
+                    if (timed) "Longest hold" else "Personal record",
+                    pr?.let { if (timed) formatSeconds(it.value.toInt()) else if (bodyweight) "${it.reps}" else formatWeightValue(display(it.value)) } ?: "-",
+                    if (timed) "" else if (bodyweight) "reps" else unit.label,
+                    pr?.let { if (timed || bodyweight) shortDate(it.time) else "${it.reps} reps, ${shortDate(it.time)}" },
+                    null,
+                    Modifier.weight(1f).fillMaxHeight(),
+                )
+                val delta = if (latest != null && previous != null) { if (bodyweight) (latest.reps - previous.reps).toDouble() else latest.value - previous.value } else null
+                StatCard(
+                    if (timed) "Latest hold" else "Latest top set",
+                    latest?.let { if (timed) formatSeconds(it.value.toInt()) else if (bodyweight) "${it.reps}" else formatWeightValue(display(it.value)) } ?: "-",
+                    if (timed) "" else if (bodyweight) "reps" else unit.label,
+                    null,
+                    delta?.takeIf { abs(it) > 0.01 }?.let { d -> (if (d > 0) "+" else "−") + if (timed) "${abs(d).toInt()} s" else if (bodyweight) plural(abs(d).toInt(), "rep") else "${formatWeightValue(abs(display(d)))} ${unit.label}" },
+                    Modifier.weight(1f).fillMaxHeight(),
+                )
             }
-            Mute(if (timed) "Longest hold per session." else if (bodyweight) "Most reps per session." else "Capsules show reps on the top set.", Modifier.padding(start = 4.dp, top = 6.dp), size = T.Caption)
+            GlassCard(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp).fillMaxWidth(), padding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
+                Segmented(ChartRange.entries.map { it.label }, range.ordinal, { range = ChartRange.entries[it] }, Modifier.fillMaxWidth(), height = 36.dp, fill = true)
+                Spacer(Modifier.height(14.dp))
+                if (shown.isEmpty()) {
+                    Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) { Mute("Log a session to see your trend.") }
+                } else {
+                    ProgressChart(shown, timed, bodyweight, unit)
+                }
+                Mute(if (timed) "Longest hold per session." else if (bodyweight) "Most reps per session." else "Capsules show reps on the top set.", Modifier.padding(start = 4.dp, top = 6.dp), size = T.Caption)
+            }
+            Row(Modifier.padding(start = 22.dp, end = 22.dp, top = 18.dp, bottom = 10.dp), verticalAlignment = Alignment.Bottom) {
+                Txt("Session history", Modifier.weight(1f), size = T.Subhead, weight = Bold)
+                Mute(plural(sessions.size, "session"), weight = Semibold)
+            }
+            }
         }
-        val sessions = remember(own) { own.filter { it.finishedAt != null && !it.deleted && it.entries.any { e -> e.exerciseId == exerciseId && !e.isSkipped } }.sortedByDescending { workoutTime(it) } }
-        Row(Modifier.padding(start = 22.dp, end = 22.dp, top = 18.dp, bottom = 10.dp), verticalAlignment = Alignment.Bottom) {
-            Txt("Session history", Modifier.weight(1f), size = T.Subhead, weight = Bold)
-            Mute(plural(sessions.size, "session"), weight = Semibold)
-        }
-        Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            sessions.take(30).forEach { w ->
-                val entry = w.entries.first { it.exerciseId == exerciseId && !it.isSkipped }
+        items(sessions.take(30), key = { it.id }) { w ->
+            Box(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp)) {
+                // Every occurrence of the lift in this session (it can appear twice), like bestSetIn reads them.
+                val entries = w.entries.filter { it.exerciseId == exerciseId && !it.isSkipped }
+                val entry = entries.first()
                 // Each session reads in the shape it was logged in.
                 val entryTimed = entry.isTimed
                 GlassCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), padding = androidx.compose.foundation.layout.PaddingValues(horizontal = 18.dp, vertical = 12.dp), onClick = { nav.push(Route.WorkoutDetail(w.id)) }) {
@@ -453,7 +462,7 @@ fun ExerciseDetailScreen(exerciseId: String) {
                     }
                     Spacer(Modifier.height(2.dp))
                     // As in the mockup: numbered set lines with a dotted leader, the top set in forest.
-                    val done = entry.sets.filter { it.done }
+                    val done = entries.flatMap { e -> e.sets.filter { it.done } }
                     // The top set as History marks it: the best working set, or the longest hold. Warm-ups never count.
                     val topId = if (entryTimed) {
                         done.filter { it.tag != SetTag.Warmup && (it.seconds ?: 0) > 0 }.maxByOrNull { it.seconds ?: 0 }?.id
@@ -462,12 +471,12 @@ fun ExerciseDetailScreen(exerciseId: String) {
                     }
                     done.forEachIndexed { i, s ->
                         val v = convert(s.weight, s.unit, unit)
-                        SetLine("${i + 1}", if (entryTimed) formatSeconds(s.seconds ?: 0) else if (s.weight == 0.0) plural(s.reps, "rep") else "${formatWeightValue(v)} ${unit.label} × ${s.reps}", strong = s.id == topId)
+                        SetLine("${i + 1}", if (entryTimed) (if (s.weight > 0) "${formatWeightValue(v)} ${unit.label} × ${formatSeconds(s.seconds ?: 0)}" else formatSeconds(s.seconds ?: 0)) else if (s.weight == 0.0) plural(s.reps, "rep") else "${formatWeightValue(v)} ${unit.label} × ${s.reps}", strong = s.id == topId)
                     }
                 }
             }
         }
-        Spacer(Modifier.height(48.dp))
+        item(key = "end") { Spacer(Modifier.height(38.dp)) }
     }
 
     ActionSheet(
