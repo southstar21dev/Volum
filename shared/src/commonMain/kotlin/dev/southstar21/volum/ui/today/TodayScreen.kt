@@ -82,6 +82,7 @@ import dev.southstar21.volum.ui.components.ActionSheet
 import dev.southstar21.volum.ui.components.Avatar
 import dev.southstar21.volum.ui.components.photoUrl
 import dev.southstar21.volum.ui.components.CircleButton
+import dev.southstar21.volum.ui.components.SmallCircleButton
 import dev.southstar21.volum.ui.components.ConfirmSheet
 import dev.southstar21.volum.ui.components.GlassCard
 import dev.southstar21.volum.ui.components.Mute
@@ -557,20 +558,6 @@ private fun RoutineCard(routine: Routine, subtitle: String, highlight: Boolean, 
         }
         Spacer(Modifier.height(5.dp))
         Mute(if (active) "In progress" else subtitle, size = T.Caption, maxLines = 2)
-    }
-}
-
-/** A 38 dp glass circle inside a 48 dp touch target. */
-@Composable
-private fun SmallCircleButton(icon: ImageVector, contentDescription: String, iconSize: Dp, accent: Boolean = false, onClick: () -> Unit) {
-    val c = Volum.colors
-    Box(
-        Modifier.size(48.dp).tappable(haptic = accent, onClick = onClick).semantics { this.contentDescription = contentDescription },
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(Modifier.size(38.dp).then(if (accent) Modifier.accentGel(CircleShape) else Modifier.liquidGlass(CircleShape)), contentAlignment = Alignment.Center) {
-            Icon(icon, if (accent) c.onAccent else c.ink, size = iconSize)
-        }
     }
 }
 

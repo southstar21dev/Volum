@@ -47,6 +47,7 @@ import dev.southstar21.volum.model.SetTag
 import dev.southstar21.volum.model.WeightUnit
 import dev.southstar21.volum.model.WorkoutEntry
 import dev.southstar21.volum.ui.components.CircleButton
+import dev.southstar21.volum.ui.components.SmallCircleButton
 import dev.southstar21.volum.ui.components.Divider
 import dev.southstar21.volum.ui.components.GlassCard
 import dev.southstar21.volum.ui.components.Mute
@@ -89,19 +90,6 @@ fun toggleHaptic(entries: List<WorkoutEntry>, entry: WorkoutEntry, set: SetEntry
 
 /** The weight shown in [preferred] units (converted if logged in the other). */
 fun SetEntry.weightIn(preferred: WeightUnit): Double = convert(weight, unit, preferred)
-
-/** A 38 dp glass circle in a 48 dp touch target: small on the card, still easy to hit. */
-@Composable
-private fun CardCircleButton(icon: ImageVector, contentDescription: String, onClick: () -> Unit) {
-    Box(
-        Modifier.size(48.dp).tappable(onClick = onClick).semantics { this.contentDescription = contentDescription },
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(Modifier.size(38.dp).liquidGlass(CircleShape), contentAlignment = Alignment.Center) {
-            Icon(icon, Volum.colors.ink, size = 18.dp)
-        }
-    }
-}
 
 /** One nudge: 2.5 kg / 5 lb, or 5 s for a hold. */
 fun stepWeight(preferred: WeightUnit) = if (preferred == WeightUnit.Kg) 2.5 else 5.0
@@ -181,9 +169,9 @@ fun ActiveEntryCard(
                 // The routine's note for this exercise: one quiet line, the whole note once opened.
                 if (!entry.isSkipped) entry.note?.trim()?.takeIf { it.isNotEmpty() }?.let { Mute(it, size = T.Small, maxLines = if (expanded) 3 else 1) }
             }
-            CardCircleButton(Icons.More, "More options for ${entry.name}") { actions.onMenu(entry) }
+            SmallCircleButton(Icons.More, "More options for ${entry.name}", iconSize = 18.dp) { actions.onMenu(entry) }
             AnimatedVisibility(!expanded, enter = fadeIn() + androidx.compose.animation.expandHorizontally(), exit = fadeOut() + androidx.compose.animation.shrinkHorizontally()) {
-                CardCircleButton(Icons.ChevronDown, "Expand ${entry.name}") { actions.onExpand(entry) }
+                SmallCircleButton(Icons.ChevronDown, "Expand ${entry.name}", iconSize = 18.dp) { actions.onExpand(entry) }
             }
         }
         AnimatedVisibility(

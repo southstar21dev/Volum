@@ -123,6 +123,11 @@ internal fun editableWeight(weight: Double): String {
 /**
  * Lets a sheet act once per opening. A sheet stays on screen, and tappable, while it slides away, so a
  * quick second tap would otherwise add, save or delete a second time.
+ *
+ * Deliberately not merged with the components package's per-opening guard behind sheetAction: that
+ * one is keyed to a BottomSheet's own open flag and is inert outside a sheet, while these sheets are
+ * driven by a nullable target (see rememberLast) and re-arm when it flips, so the two reset on
+ * different signals and merging them would change when a tap is let through.
  */
 private class Once {
     var used = false
