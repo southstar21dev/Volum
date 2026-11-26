@@ -323,7 +323,7 @@ fun Modifier.lgInset(shape: Shape, c: VolumColors): Modifier = this
 
 /**
  * A liquid pane's paint for [dev.southstar21.volum.ui.liquid.LiquidTabs]' `surface`: the liquid fill,
- * then [liquidSheen] and [liquidRim]. The surface is drawn on every frame the tabs move or swell, so its
+ * then its sheen and rim. The surface is drawn on every frame the tabs move or swell, so its
  * path, outline and brushes are kept and only rebuilt when the size, shape or density changes.
  */
 @Composable
@@ -364,7 +364,7 @@ private class LiquidPane(private val c: VolumColors) {
         drawOutline(outline, rimBrush, style = rim)
     }
 
-    /** As [liquidSheen] and [liquidRim] draw it. */
+    /** Builds the path, outline and brushes the pane paints with. */
     private fun build(scope: DrawScope, shape: Shape) = with(scope) {
         this@LiquidPane.shape = shape
         this@LiquidPane.size = size

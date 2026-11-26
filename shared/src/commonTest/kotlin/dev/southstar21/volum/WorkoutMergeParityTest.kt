@@ -70,7 +70,7 @@ class WorkoutMergeParityTest {
         assertEquals("2026-01-01T10:00:50.001Z", stamped.single().sets.single().updatedAt)
     }
 
-    /** The wire form of a mutation (see mutationJson in AppContainer.kt) back into the app's type. */
+    /** The wire form of a mutation (see mutationJson in PartnerRepository.kt) back into the app's type. */
     private fun mutationOf(json: JsonObject): WorkoutMutation {
         fun text(key: String) = json.getValue(key).jsonPrimitive.content
         fun setOf(element: JsonElement) = VolumJson.decodeFromJsonElement(SetEntry.serializer(), element)

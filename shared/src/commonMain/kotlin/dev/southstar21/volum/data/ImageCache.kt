@@ -102,10 +102,18 @@ class ImageCache(
         }
     }
 
-    /** Keeps the folder to [MAX_FILES]: files not used this run go first, [keep] (just written) never. */
+    /**
+     * Keeps the folder to [MAX_FILES]: files not used this run go first, [keep] (just written) never.
+     * Among the files not used this run the order is the file system's: kotlinx-io has no modification
+     * time, and a platform-specific one isn't worth it for a cache this small (what is evicted is
+     * downloaded again on next use). Leftover temp files of a crashed write are removed here; writers
+     * hold [fileLock], so none is in flight.
+     */
     private fun prune(keep: Path) {
         try {
-            val files = SystemFileSystem.list(dir).filter { !it.name.endsWith(".tmp") && it.name != keep.name }
+            val (temps, listed) = SystemFileSystem.list(dir).partition { it.name.endsWith(".tmp") }
+            temps.forEach { runCatching { SystemFileSystem.delete(it, mustExist = false) } }
+            val files = listed.filter { it.name != keep.name }
             var excess = files.size + 1 - MAX_FILES
             if (excess <= 0) return
             val (used, unused) = files.partition { it.name in recent }
