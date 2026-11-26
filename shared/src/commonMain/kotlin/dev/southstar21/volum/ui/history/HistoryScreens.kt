@@ -60,6 +60,9 @@ import dev.southstar21.volum.ui.rememberToday
 import dev.southstar21.volum.ui.workoutsState
 import dev.southstar21.volum.ui.components.CircleButton
 import dev.southstar21.volum.ui.components.ConfirmSheet
+import dev.southstar21.volum.ui.routinesState
+import dev.southstar21.volum.ui.session.applySessionToRoutine
+import dev.southstar21.volum.ui.session.routineChanges
 import dev.southstar21.volum.ui.components.Divider
 import dev.southstar21.volum.ui.components.GlassCard
 import dev.southstar21.volum.ui.components.Mute
@@ -434,6 +437,12 @@ fun WorkoutDetailScreen(workoutId: String) {
         editIds?.let { (entryId, setId) -> workout?.entries?.firstOrNull { it.id == entryId }?.let { e -> e.sets.firstOrNull { it.id == setId }?.let { e to it } } }
     }
     var deletePrompt by rememberSaveable { mutableStateOf(false) }
+    var updatePrompt by rememberSaveable { mutableStateOf(false) }
+    // The routine this workout came from, made to match it: offered when that's a change. Your own routines only.
+    val routines by session.routinesState()
+    val routine = workout?.routineId?.let { routines[it] }?.takeIf { !it.deleted && it.owner == session.user.id }
+    val routineUpdate = if (workout != null && routine != null) applySessionToRoutine(routine.items, workout.entries, ::newId).takeIf { it != routine.items } else null
+    val updateChanges = routineUpdate?.let { routineChanges(routine!!.items, it) }
     // Which exercises are open. The first one done starts open, so the sets are a glance away.
     var open by rememberSaveable(stateSaver = IdSetSaver) { mutableStateOf(workout?.entries?.firstOrNull { !it.isSkipped }?.id?.let { setOf(it) } ?: emptySet()) }
 
@@ -441,7 +450,12 @@ fun WorkoutDetailScreen(workoutId: String) {
         TopInset(10.dp)
         Toolbar(
             leading = { CircleButton(Icons.ChevronLeft, "Back to history") { nav.pop() } },
-            trailing = { if (workout != null) CircleButton(Icons.Trash, "Delete workout", tint = c.danger) { deletePrompt = true } },
+            trailing = {
+                if (workout != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (routine != null && routineUpdate != null) CircleButton(Icons.Refresh, "Update ${routine.name} from this workout") { updatePrompt = true }
+                    CircleButton(Icons.Trash, "Delete workout", tint = c.danger) { deletePrompt = true }
+                }
+            },
         )
         if (workout == null) {
             Mute("This workout was deleted.", Modifier.padding(24.dp))
@@ -537,6 +551,15 @@ fun WorkoutDetailScreen(workoutId: String) {
         onSave = { entry, set -> workout?.let { w -> scope.launch { session.repository.updateWorkout(w, w.entries.map { e -> if (e.id == entry.id) e.copy(sets = e.sets.map { if (it.id == set.id) set else it }) else e }) } } },
         onRemove = { entry, set -> workout?.let { w -> scope.launch { session.repository.updateWorkout(w, w.entries.map { e -> if (e.id == entry.id) e.copy(sets = e.sets.filterNot { it.id == set.id }) else e }) } } },
         onDismiss = { editIds = null },
+    )
+    ConfirmSheet(
+        open = updatePrompt && routine != null && routineUpdate != null,
+        title = "Update ${routine?.name ?: "the routine"} from this workout?",
+        message = updateChanges?.summary(),
+        confirm = "Update ${routine?.name ?: "the routine"}",
+        destructive = false,
+        onConfirm = { if (routine != null && routineUpdate != null) scope.launch { session.repository.saveRoutine(routine.id, routine.name, routineUpdate) } },
+        onDismiss = { updatePrompt = false },
     )
     ConfirmSheet(
         open = deletePrompt,
