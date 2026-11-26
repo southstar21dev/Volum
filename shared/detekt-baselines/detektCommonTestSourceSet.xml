@@ -14,7 +14,7 @@
     <ID>MaxLineLength:AppContainerTest.kt:AppContainerTest$rig.server.records = { req -&gt; if (req.isPush()) AccountServer.Reply(503, """{"status":503,"message":"Unavailable.","data":{}}""") else null }</ID>
     <ID>MaxLineLength:AppContainerTest.kt:AppContainerTest$rig.server.records = { req -&gt; if (req.method == HttpMethod.Get) AccountServer.Reply(401, """{"status":401,"message":"Unauthorized.","data":{}}""") else null }</ID>
     <ID>MaxLineLength:AppContainerTest.kt:AppContainerTest$rig.server.refresh = { token -&gt; if (token == "expired") AccountServer.Reply(401, """{"status":401,"message":"Unauthorized.","data":{}}""") else null }</ID>
-    <ID>MaxLineLength:AuditFollowupTest.kt:AuditFollowupTest$put("name", kotlinx.serialization.json.buildJsonObject { put("message", kotlinx.serialization.json.JsonPrimitive("Too long.")) })</ID>
+    <ID>MaxLineLength:ServerClockAndErrorsTest.kt:ServerClockAndErrorsTest$put("name", kotlinx.serialization.json.buildJsonObject { put("message", kotlinx.serialization.json.JsonPrimitive("Too long.")) })</ID>
     <ID>MaxLineLength:AvatarTest.kt:AvatarTest$"""{"partner":{"id":"up","name":"Pat","email":"pat@example.com","avatar":"p_1.jpg"},"activeWorkout":null,"incoming":[],"outgoing":[]}"""</ID>
     <ID>MaxLineLength:LogicTest.kt:LogicTest$Workout(id = id, owner = owner, routineName = "Push", startedAt = at, finishedAt = at, status = WorkoutStatus.Completed, entries = entries.toList(), updatedAt = at)</ID>
     <ID>MaxLineLength:LogicTest.kt:LogicTest$entries = listOf(WorkoutEntry("e-$id", exerciseId, "Pull-up", timed = if (timed) true else null, sets = sets.toList()))</ID>
@@ -38,11 +38,11 @@
     <ID>MaxLineLength:StoreRecoveryTest.kt:StoreRecoveryTest$write("routines.json", enc(MapSerializer(String.serializer(), Routine.serializer()), mapOf("r1" to routine("r1").copy(owner = "partner"))))</ID>
     <ID>MaxLineLength:StoreTest.kt:StoreTest$store.transaction { replaceOutbox("workouts", "w", { id -&gt; dev.southstar21.volum.model.OutboxItem(id, "workouts", "w", kotlinx.serialization.json.JsonObject(emptyMap()), "2026-01-01T10:00:09.000Z") }) }</ID>
     <ID>MaxLineLength:StoreTest.kt:StoreTest$store.transaction { replaceOutbox("workouts", "w", { id -&gt; dev.southstar21.volum.model.OutboxItem(id, "workouts", "w", kotlinx.serialization.json.JsonObject(emptyMap()), first) }) }</ID>
-    <ID>MaxLineLength:SyncAuditTest.kt:SyncAuditTest$200 to """{"page":1,"perPage":500,"totalPages":1,"items":[${workoutRecord(bench(t + 60_000, WorkoutStatus.Active, s1))}]}"""</ID>
-    <ID>MaxLineLength:SyncAuditTest.kt:SyncAuditTest$r.repo.updateWorkout(current, entries = current.entries.map { it.copy(sets = it.sets + SetEntry(id = "s2", weight = 60.0, reps = 6)) })</ID>
-    <ID>MaxLineLength:SyncAuditTest.kt:SyncAuditTest$rig.repo.saveWorkout(id = "w1", routineName = "Push", entries = listOf(WorkoutEntry(id = "e1", exerciseId = "x1", name = "Bench", sets = emptyList())))</ID>
-    <ID>MaxLineLength:SyncAuditTest.kt:SyncAuditTest$val pb = PocketBase("https://pb.test", HttpClient(MockEngine { url = it.url.toString(); respond(EMPTY_LIST, HttpStatusCode.OK, JSON) }))</ID>
-    <ID>MaxLineLength:SyncAuditTest.kt:SyncAuditTest.Rig$val sync = SyncEngine(store, PocketBase("https://pb.test", script.client), repo, USER, scope.backgroundScope, authStillValid = authStillValid) { authExpired++ }</ID>
+    <ID>MaxLineLength:SyncRecoveryTest.kt:SyncRecoveryTest$200 to """{"page":1,"perPage":500,"totalPages":1,"items":[${workoutRecord(bench(t + 60_000, WorkoutStatus.Active, s1))}]}"""</ID>
+    <ID>MaxLineLength:SyncRecoveryTest.kt:SyncRecoveryTest$r.repo.updateWorkout(current, entries = current.entries.map { it.copy(sets = it.sets + SetEntry(id = "s2", weight = 60.0, reps = 6)) })</ID>
+    <ID>MaxLineLength:SyncRecoveryTest.kt:SyncRecoveryTest$rig.repo.saveWorkout(id = "w1", routineName = "Push", entries = listOf(WorkoutEntry(id = "e1", exerciseId = "x1", name = "Bench", sets = emptyList())))</ID>
+    <ID>MaxLineLength:SyncRecoveryTest.kt:SyncRecoveryTest$val pb = PocketBase("https://pb.test", HttpClient(MockEngine { url = it.url.toString(); respond(EMPTY_LIST, HttpStatusCode.OK, JSON) }))</ID>
+    <ID>MaxLineLength:SyncRecoveryTest.kt:SyncRecoveryTest.Rig$val sync = SyncEngine(store, PocketBase("https://pb.test", script.client), repo, USER, scope.backgroundScope, authStillValid = authStillValid) { authExpired++ }</ID>
     <ID>MaxLineLength:SyncEdgeTest.kt:SyncEdgeTest$if (r.method == HttpMethod.Get) EdgeServer.Reply.Broken("""{"page":1,"items":[""", CancellationException("Stream reset")) else null</ID>
     <ID>MaxLineLength:SyncTest.kt:SyncTest$FakePb.Reply.Json(400, """{"status":400,"message":"Failed to update record.","data":{"name":{"code":"validation_required","message":"Cannot be blank."}}}""")</ID>
     <ID>MaxLineLength:SyncTest.kt:SyncTest$assertEquals(rig.store.workouts.value.getValue("w1").copy(updated = null), VolumJson.decodeFromJsonElement(Workout.serializer(), rig.store.outbox.value.single().payload))</ID>

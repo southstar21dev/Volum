@@ -28,7 +28,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-class AuditFollowupTest {
+class ServerClockAndErrorsTest {
     // ---- Clock offset from the Date header -----------------------------------------------------
 
     private val received = parseTime("2023-11-14T22:13:20.000Z")

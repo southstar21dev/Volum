@@ -57,22 +57,22 @@ private class Script(private val handle: suspend (HttpMethod, String, String?) -
 private const val EMPTY_LIST = """{"page":1,"perPage":500,"totalPages":1,"items":[]}"""
 private const val REJECTED = """{"status":400,"message":"Failed to create record.","data":{}}"""
 
-class SyncAuditTest {
+class SyncRecoveryTest {
     private class Rig(scope: TestScope, val script: Script, authStillValid: suspend () -> Boolean = { true }) {
-        val store = LocalStore(Path(SystemTemporaryDirectory, "volum-audit-${newId()}"), scope.backgroundScope)
+        val store = LocalStore(Path(SystemTemporaryDirectory, "volum-sync-${newId()}"), scope.backgroundScope)
         val repo = Repository(store, USER)
         var authExpired = 0
         val sync = SyncEngine(store, PocketBase("https://pb.test", script.client), repo, USER, scope.backgroundScope, authStillValid = authStillValid) { authExpired++ }
     }
 
-    // ---- VOL-6 ----
+    // ---- Filter placeholders ----
 
     @Test fun filterValuesAreNeverSubstitutedTwice() {
         val out = PocketBase.filter("a = {:a} && b = {:b}", mapOf("a" to "x{:b}", "b" to "it's"))
         assertEquals("a = 'x{:b}' && b = 'it\\'s'", out)
     }
 
-    // ---- VOL-16 ----
+    // ---- Rejected pushes and revoked sign-ins ----
 
     private fun pushRejectingScript() = Script { m, _, _ ->
         when (m) {
@@ -110,7 +110,7 @@ class SyncAuditTest {
         assertTrue(rig.store.outbox.value.all { it.failed })
     }
 
-    // ---- VOL-17 ----
+    // ---- Update required while retrying undecodable records ----
 
     @Test fun anUpdateRequiredAnswerWhenRetryingUndecodableRecordsKeepsTheirIds() = runTest {
         val bad = buildJsonObject { put("id", "bad"); put("updated", "2026-01-01 09:00:00.000Z") }
@@ -129,7 +129,7 @@ class SyncAuditTest {
         assertEquals("bad", rig.store.meta.value["undecodable.exercises"])
     }
 
-    // ---- VOL-14 ----
+    // ---- Finished workouts and failed outbox items ----
 
     private fun bench(updated: Long, status: WorkoutStatus, vararg sets: SetEntry, finishedAt: String? = null) = Workout(
         id = "w1", owner = USER, routineName = "Push", startedAt = isoOf(updated), finishedAt = finishedAt, status = status,
@@ -197,7 +197,7 @@ class SyncAuditTest {
         assertEquals(1, rig.store.workouts.value.getValue("w1").entries.single().sets.size, "the server copy is applied")
     }
 
-    // ---- VOL-24 ----
+    // ---- Sync reruns and stop ----
 
     @Test fun aSyncRequestedWhileOneRunsRunsAgainAfterIt() = runTest {
         val entered = CompletableDeferred<Unit>()
@@ -234,7 +234,7 @@ class SyncAuditTest {
         assertTrue(script.log.isEmpty(), "a scheduled sync doesn't run after stop()")
     }
 
-    // ---- VOL-39 ----
+    // ---- List requests ----
 
     @Test fun listsSkipTheTotalCount() = runTest {
         var url: String? = null
@@ -243,7 +243,7 @@ class SyncAuditTest {
         assertTrue(url!!.contains("skipTotal=1"))
     }
 
-    // ---- VOL-27 ----
+    // ---- Realtime errors and backoff ----
 
     @Test fun realtimeReportsAnUpdateRequiredAnswerAndBacksOff() = runTest {
         var connects = 0
