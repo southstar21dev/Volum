@@ -5,10 +5,13 @@ const { parseVersion, requiredVersion } = require("../pb_hooks/version_gate.js")
 const config = { minIos: "1.6.0", minAndroid: "v1.4.2", blockLegacy: true };
 
 test("parseVersion reads versions with a prefix or a suffix and rejects the rest", () => {
-  assert.deepEqual(parseVersion("1.4.2"), [1, 4, 2]);
-  assert.deepEqual(parseVersion("v1.4.2"), [1, 4, 2]);
-  assert.deepEqual(parseVersion("1.4.2-beta.1"), [1, 4, 2]);
-  assert.deepEqual(parseVersion("2"), [2, 0, 0]);
+  const plain = (v) => (v === null ? null : [...v]);
+  assert.deepEqual(plain(parseVersion("1.4.2")), [1, 4, 2]);
+  assert.deepEqual(plain(parseVersion("v1.4.2")), [1, 4, 2]);
+  assert.deepEqual(plain(parseVersion("1.4.2-beta.1")), [1, 4, 2]);
+  assert.equal(parseVersion("1.4.2").prerelease, false);
+  assert.equal(parseVersion("1.4.2-beta.1").prerelease, true);
+  assert.deepEqual(plain(parseVersion("2")), [2, 0, 0]);
   assert.equal(parseVersion("beta"), null);
   assert.equal(parseVersion(""), null);
   assert.equal(parseVersion(null), null);
