@@ -97,8 +97,6 @@ kotlin {
             api(libs.kotlinx.datetime)
             implementation(libs.kotlinx.io.core)
             api(libs.ktor.client.core)
-            implementation(libs.backdrop)
-            implementation(libs.kyant.shapes)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
@@ -109,6 +107,9 @@ kotlin {
             implementation(libs.kotlinx.coroutines.android)
             implementation(libs.ktor.client.okhttp)
             implementation(libs.androidx.activity.compose)
+            // The Android dock's liquid glass; iOS has the native tab bar and never links these.
+            implementation(libs.backdrop)
+            implementation(libs.kyant.shapes)
         }
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)

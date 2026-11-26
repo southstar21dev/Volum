@@ -56,18 +56,6 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.draw.drawWithCache
-import com.kyant.backdrop.drawPlainBackdrop
-import com.kyant.backdrop.Backdrop
-import com.kyant.backdrop.backdrops.emptyBackdrop
-import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.vibrancy
-import com.kyant.backdrop.highlight.Highlight
-import com.kyant.backdrop.isRenderEffectSupported
-import com.kyant.backdrop.shadow.Shadow as BackdropShadow
 import androidx.compose.ui.graphics.shadow.Shadow
 import dev.southstar21.volum.ui.theme.Volum
 import dev.southstar21.volum.ui.theme.riseIn
@@ -77,27 +65,32 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/** What glass refracts: the colour field behind every screen. */
-val LocalBackdrop = staticCompositionLocalOf<Backdrop> { emptyBackdrop() }
-
 /**
  * The colour field every screen sits on (sage gradient, a soft accent glow top-right and bottom-left,
- * white and sage light pools), recorded as the backdrop that glass cards and controls bend.
+ * white and sage light pools).
  */
 @Composable
 fun GlassRoot(solid: Boolean, modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
     val colors = Volum.colors
-    val backdrop = rememberLayerBackdrop()
     val field = remember { FieldInfo() }
     SideEffect { field.solid = solid }
-    val fieldBackdrop = remember(field, colors) { FieldBackdrop(field, colors) }
-    CompositionLocalProvider(LocalBackdrop provides backdrop, LocalField provides field, LocalFieldBackdrop provides fieldBackdrop) {
-        Box(modifier.fillMaxSize().onSizeChanged { field.size = it }.onGloballyPositioned { field.coordinates = it }) {
-            Box(Modifier.fillMaxSize().layerBackdrop(backdrop).drawBehind { drawField(field, colors, solid, size.width, size.height) })
-            content()
+    // Android records the field for its dock's glass; iOS (native tab bar) records nothing.
+    GlassBackdropScope { recorded ->
+        CompositionLocalProvider(LocalField provides field) {
+            Box(modifier.fillMaxSize().onSizeChanged { field.size = it }.onGloballyPositioned { field.coordinates = it }) {
+                Box(Modifier.fillMaxSize().then(recorded).drawBehind { drawField(field, colors, solid, size.width, size.height) })
+                content()
+            }
         }
     }
 }
+
+/**
+ * Wraps the root in a recording of the colour field for the Android dock's glass ([content] gets the
+ * modifier that records it). Platform code, so the backdrop library stays out of the iOS framework.
+ */
+@Composable
+internal expect fun GlassBackdropScope(content: @Composable (recorded: Modifier) -> Unit)
 
 /** The field's size and style, so a strip elsewhere can repaint its own slice of it. */
 @Stable
@@ -167,13 +160,12 @@ private class Placed {
 }
 
 /**
- * A frosted strip along the top or bottom edge: the field with [content] blurred over it, fading out
- * toward the middle of the screen, so scrolled content doesn't run sharp under the status bar or dock.
- * [solid] is how much of the strip (from its outer edge) stays fully frosted before the fade starts.
- * Without blur support (Android 11 and older) the field alone fades the content out.
+ * A strip along the top or bottom edge: the field painted over the content, fading out toward the
+ * middle of the screen, so scrolled content doesn't run sharp under the status bar or dock. [solid] is
+ * how much of the strip (from its outer edge) stays fully covered before the fade starts.
  */
 @Composable
-fun EdgeBlur(content: Backdrop, top: Boolean, height: Dp, solid: Dp, modifier: Modifier = Modifier) {
+fun EdgeBlur(top: Boolean, height: Dp, solid: Dp, modifier: Modifier = Modifier) {
     val c = Volum.colors
     val field = LocalField.current
     // Where the strip sits is read live while drawing. As state alone it arrived a frame late: the
@@ -181,7 +173,6 @@ fun EdgeBlur(content: Backdrop, top: Boolean, height: Dp, solid: Dp, modifier: M
     // edge on every page push and pop. The state copy stays so a move on its own still redraws.
     var y by remember { mutableFloatStateOf(0f) }
     val placed = remember { Placed() }
-    val blur = glassEffects()
     Box(
         modifier
             .fillMaxWidth()
@@ -202,79 +193,20 @@ fun EdgeBlur(content: Backdrop, top: Boolean, height: Dp, solid: Dp, modifier: M
                     drawContent()
                     drawRect(mask, blendMode = BlendMode.DstIn)
                 }
-            }
-            .then(
-                if (blur) Modifier.drawPlainBackdrop(
-                    backdrop = content,
-                    shape = { RectangleShape },
-                    effects = { blur(14.dp.toPx()) },
-                ) else Modifier,
-            ),
+            },
     )
 }
 
-private fun DrawScope.drawField(field: FieldInfo, c: VolumColors, solid: Boolean, w: Float, h: Float, filter: ColorFilter? = null) {
+private fun DrawScope.drawField(field: FieldInfo, c: VolumColors, solid: Boolean, w: Float, h: Float) {
     if (solid) {
-        drawRect(c.baseMid, size = Size(w, h), colorFilter = filter)
+        drawRect(c.baseMid, size = Size(w, h))
         return
     }
     val b = field.brushes(c, w, h)
-    drawRect(b.linear, size = b.size, colorFilter = filter)
+    drawRect(b.linear, size = b.size)
     for (g in b.glows) {
         // An ellipse: a circle squashed vertically about its centre.
-        scale(1f, g.squash, pivot = g.center) { drawCircle(g.brush, radius = g.radius, center = g.center, colorFilter = filter) }
-    }
-}
-
-/** The field backdrop drawn directly, for glass that only needs its colour (see [FieldBackdrop]). */
-val LocalFieldBackdrop = staticCompositionLocalOf<Backdrop> { emptyBackdrop() }
-
-/**
- * Backdrop's `vibrancy()`: its colour-controls matrix at saturation 1.5 (brightness 0, contrast 1),
- * as built in com.kyant.backdrop.effects.ColorFilter.
- */
-private val Vibrancy: ColorFilter = run {
-    val s = 1.5f
-    val inv = 1f - s
-    val r = 0.213f * inv
-    val g = 0.715f * inv
-    val b = 0.072f * inv
-    ColorFilter.colorMatrix(
-        ColorMatrix(
-            floatArrayOf(
-                r + s, g, b, 0f, 0f,
-                r, g + s, b, 0f, 0f,
-                r, g, b + s, 0f, 0f,
-                0f, 0f, 0f, 1f, 0f,
-            ),
-        ),
-    )
-}
-
-/**
- * The colour field as a backdrop that glass draws straight into itself: the same gradients, shifted to
- * the glass's place on screen as LayerBackdrop shifts its recording, with the vibrancy colour matrix
- * applied as they're drawn. The field is a few soft gradients, so blurring and refracting it changes no
- * pixel by more than a few levels; this skips those render effects and with them the offscreen layer
- * every card otherwise renders on every frame it moves.
- */
-private class FieldBackdrop(private val field: FieldInfo, private val colors: VolumColors) : Backdrop {
-    override val isCoordinatesDependent: Boolean get() = true
-
-    override fun DrawScope.drawBackdrop(
-        density: androidx.compose.ui.unit.Density,
-        coordinates: androidx.compose.ui.layout.LayoutCoordinates?,
-        layerBlock: (androidx.compose.ui.graphics.GraphicsLayerScope.() -> Unit)?,
-    ) {
-        val fs = field.size
-        if (fs.width == 0) return
-        val origin = field.coordinates
-        val offset = if (coordinates != null && origin != null && coordinates.isAttached && origin.isAttached) {
-            coordinates.positionInWindow() - origin.positionInWindow()
-        } else {
-            Offset.Zero
-        }
-        translate(-offset.x, -offset.y) { drawField(field, colors, field.solid, fs.width.toFloat(), fs.height.toFloat(), Vibrancy) }
+        scale(1f, g.squash, pivot = g.center) { drawCircle(g.brush, radius = g.radius, center = g.center) }
     }
 }
 
@@ -315,25 +247,10 @@ private fun Modifier.nestedCard(shape: Shape): Modifier {
 private fun Modifier.fieldCard(shape: Shape): Modifier {
     val c = Volum.colors
     val rim = Brush.verticalGradient(listOf(c.spec, c.rim, c.rim))
-    if (!glassEffects()) {
-        return this
-            .outerShadow(shape, Shadow(radius = 24.dp, color = c.drop, offset = DpOffset(0.dp, 12.dp)))
-            .background(c.glass.copy(alpha = (c.glass.alpha * 1.6f).coerceAtMost(1f)), shape)
-            .border(1.dp, rim, shape)
-            .marksGlass()
-    }
-    // The field, drawn straight in with its vibrancy (see FieldBackdrop): on these soft gradients the
-    // blur and lens the cards used to run changed no pixel by more than a few levels, and cost an
-    // offscreen render pass per card on every frame it moved.
+    // Frosted: a translucent fill with a drawn rim and shadow, no live refraction.
     return this
-        .outerShadow(shape, Shadow(radius = 24.dp, color = c.drop, offset = DpOffset(0.dp, 12.dp), spread = (-8).dp))
-        .drawBackdrop(
-            backdrop = LocalFieldBackdrop.current,
-            shape = { shape },
-            effects = {},
-            highlight = { Highlight.Default.copy(alpha = 0.6f) },
-            onDrawSurface = { drawRect(c.glass) },
-        )
+        .outerShadow(shape, Shadow(radius = 24.dp, color = c.drop, offset = DpOffset(0.dp, 12.dp)))
+        .background(c.glass.copy(alpha = (c.glass.alpha * 1.6f).coerceAtMost(1f)), shape)
         .border(1.dp, rim, shape)
         .marksGlass()
 }
@@ -405,36 +322,6 @@ fun Modifier.lgInset(shape: Shape, c: VolumColors): Modifier = this
     .innerShadow(shape, Shadow(radius = 8.dp, color = Color.White.copy(alpha = 0.18f), offset = DpOffset(0.dp, (-3).dp)))
 
 /**
- * The mockups' `.lg` sheen inside a liquid surface: a bright inner top edge (`inset 0 1.5px 1px spec`)
- * and a soft white glow rising from the bottom edge (`inset 0 -3px 8px rgba(255,255,255,.18)`).
- */
-fun DrawScope.liquidSheen(shape: Shape, c: VolumColors) {
-    val path = Path().apply { addOutline(shape.createOutline(size, layoutDirection, this@liquidSheen)) }
-    clipPath(path) {
-        val glow = 10.dp.toPx().coerceAtMost(size.height / 2)
-        drawRect(
-            Brush.verticalGradient(0f to Color.Transparent, 0.55f to Color.White.copy(alpha = 0.10f), 1f to Color.White.copy(alpha = 0.20f), startY = size.height - glow, endY = size.height),
-            topLeft = Offset(0f, size.height - glow),
-            size = Size(size.width, glow),
-        )
-        val spec = 2.5.dp.toPx()
-        drawRect(
-            Brush.verticalGradient(0f to c.spec, 1f to Color.Transparent, startY = 0f, endY = spec),
-            size = Size(size.width, spec),
-        )
-    }
-}
-
-/** The `.lg` rim drawn inside a surface that has no border of its own (the dock's pane). */
-fun DrawScope.liquidRim(shape: Shape, c: VolumColors) {
-    drawOutline(
-        shape.createOutline(size, layoutDirection, this),
-        Brush.verticalGradient(listOf(c.spec, c.liquidRim)),
-        style = Stroke(width = 2.dp.toPx()),
-    )
-}
-
-/**
  * A liquid pane's paint for [dev.southstar21.volum.ui.liquid.LiquidTabs]' `surface`: the liquid fill,
  * then [liquidSheen] and [liquidRim]. The surface is drawn on every frame the tabs move or swell, so its
  * path, outline and brushes are kept and only rebuilt when the size, shape or density changes.
@@ -498,63 +385,24 @@ private class LiquidPane(private val c: VolumColors) {
 @Composable
 private fun Modifier.fieldLiquid(shape: Shape, tint: Color?): Modifier {
     val c = Volum.colors
-    val backdrop = LocalBackdrop.current
     val fill = Brush.verticalGradient(listOf(c.liquidTop, c.liquidBottom))
-    val rim = Brush.verticalGradient(listOf(c.spec, c.liquidRim))
-    if (!glassEffects()) {
-        return this
-            .outerShadow(shape, Shadow(radius = 18.dp, color = c.drop, offset = DpOffset(0.dp, 8.dp), spread = (-6).dp))
-            .background(c.sheet, shape)
-            .background(fill, shape)
-            .then(if (tint != null) Modifier.background(tint, shape) else Modifier)
-            .lgInset(shape, c)
-            .border(1.dp, c.liquidRim, shape)
-    }
     return this
-        .drawBackdrop(
-            backdrop = backdrop,
-            shape = { shape },
-            effects = {
-                vibrancy()
-                blur(6.dp.toPx())
-                lens(12.dp.toPx(), 20.dp.toPx())
-            },
-            highlight = { Highlight.Default.copy(alpha = 0.8f) },
-            shadow = { BackdropShadow(radius = 18.dp, color = c.drop) },
-            onDrawSurface = {
-                drawRect(fill)
-                if (tint != null) drawRect(tint)
-            },
-        )
+        .outerShadow(shape, Shadow(radius = 18.dp, color = c.drop, offset = DpOffset(0.dp, 8.dp), spread = (-6).dp))
+        .background(c.sheet, shape)
+        .background(fill, shape)
+        .then(if (tint != null) Modifier.background(tint, shape) else Modifier)
         .lgInset(shape, c)
         .border(1.dp, c.liquidRim, shape)
 }
 
-/** Pull-up sheets: the sheet tint over a heavily blurred, saturated backdrop (no lens, no white wash). */
+/** Pull-up sheets: the sheet tint over the field, frosted (no live blur). */
 @Composable
 fun Modifier.sheetGlass(shape: Shape): Modifier {
     val c = Volum.colors
-    val backdrop = LocalBackdrop.current
     val rim = Brush.verticalGradient(listOf(c.spec, c.liquidRim))
-    if (!glassEffects()) {
-        return this
-            .outerShadow(shape, Shadow(radius = 30.dp, color = c.drop, offset = DpOffset(0.dp, (-6).dp), spread = (-8).dp))
-            .background(c.sheet.copy(alpha = 0.96f), shape)
-            .border(1.dp, rim, shape)
-            .marksGlass()
-    }
     return this
-        .drawBackdrop(
-            backdrop = backdrop,
-            shape = { shape },
-            effects = {
-                vibrancy()
-                blur(30.dp.toPx())
-            },
-            highlight = { Highlight.Default.copy(alpha = 0.7f) },
-            shadow = { BackdropShadow(radius = 30.dp, color = c.drop) },
-            onDrawSurface = { drawRect(c.sheet) },
-        )
+        .outerShadow(shape, Shadow(radius = 30.dp, color = c.drop, offset = DpOffset(0.dp, (-6).dp), spread = (-8).dp))
+        .background(c.sheet.copy(alpha = 0.96f), shape)
         .border(1.dp, rim, shape)
         .marksGlass()
 }
@@ -629,13 +477,3 @@ fun Modifier.neuOut(shape: Shape): Modifier {
         .outerShadow(shape, Shadow(radius = 20.dp, color = c.neuLight, offset = DpOffset((-9).dp, (-9).dp)))
         .background(c.neuBg, shape)
 }
-
-/**
- * Whether glass refracts and blurs what's behind it (the backdrop library's render effects) or takes
- * the frosted look: translucent fills with drawn rims and shadows. Frosted on every platform: it reads
- * cleaner, and on iOS the live effects began dropping whole frames after a while (a page left half
- * drawn for a frame, seen as flashing).
- */
-fun glassEffects(): Boolean = LiveGlass && isRenderEffectSupported()
-
-private const val LiveGlass = false

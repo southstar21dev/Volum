@@ -2,7 +2,6 @@ package dev.southstar21.volum.ui
 
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.EnterExitState
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -15,19 +14,15 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -48,66 +43,51 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
-import com.kyant.backdrop.Backdrop
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.LocalNavAnimatedContentScope
 import androidx.navigation3.ui.NavDisplay
-import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import dev.southstar21.volum.data.AppContainer
 import dev.southstar21.volum.data.UserSession
 import dev.southstar21.volum.model.VolumJson
 import dev.southstar21.volum.platform.LocalNativeViewsSettled
 import dev.southstar21.volum.platform.SystemNavbarState
-import dev.southstar21.volum.platform.hapticTick
 import dev.southstar21.volum.platform.platformNavbar
 import dev.southstar21.volum.ui.auth.AuthScreen
 import dev.southstar21.volum.ui.auth.OnboardingScreen
 import dev.southstar21.volum.ui.components.EdgeBlur
 import dev.southstar21.volum.ui.components.GlassRoot
-import dev.southstar21.volum.ui.components.glassEffects
-import dev.southstar21.volum.ui.components.LocalBackdrop
 import dev.southstar21.volum.ui.components.LocalOverlayHost
 import dev.southstar21.volum.ui.components.OverlayHost
 import dev.southstar21.volum.ui.components.OverlayLayer
-import dev.southstar21.volum.ui.components.Txt
-import dev.southstar21.volum.ui.components.liquidGlass
-import dev.southstar21.volum.ui.components.rememberLiquidPane
 import dev.southstar21.volum.ui.components.readableWidth
 import dev.southstar21.volum.ui.history.HistoryScreen
 import dev.southstar21.volum.ui.history.WorkoutDetailScreen
 import dev.southstar21.volum.ui.lifts.ExerciseDetailScreen
 import dev.southstar21.volum.ui.lifts.LiftsScreen
-import dev.southstar21.volum.ui.liquid.LiquidTabs
 import dev.southstar21.volum.ui.profile.PairPartnerScreen
 import dev.southstar21.volum.ui.profile.ProfileScreen
 import dev.southstar21.volum.ui.routines.RoutineEditorScreen
 import dev.southstar21.volum.ui.session.PartnerSessionScreen
 import dev.southstar21.volum.ui.session.RetainLiveHolds
 import dev.southstar21.volum.ui.session.SessionScreen
-import dev.southstar21.volum.ui.theme.Bold
 import dev.southstar21.volum.ui.theme.Durations
 import dev.southstar21.volum.ui.theme.Easings
 import dev.southstar21.volum.ui.theme.Entrance
 import dev.southstar21.volum.ui.theme.ExtraBold
-import dev.southstar21.volum.ui.theme.Icon
 import dev.southstar21.volum.ui.theme.Icons
 import dev.southstar21.volum.ui.theme.LocalEntrance
 import dev.southstar21.volum.ui.theme.LocalReduceMotion
 import dev.southstar21.volum.ui.theme.Semibold
-import dev.southstar21.volum.ui.theme.T
 import dev.southstar21.volum.ui.theme.Volum
 import dev.southstar21.volum.ui.theme.VolumTheme
 import dev.southstar21.volum.ui.theme.tappable
@@ -340,14 +320,12 @@ private fun MainShell(overlays: OverlayHost) {
     }
 
     CompositionLocalProvider(LocalNav provides nav) {
-        val content = rememberLayerBackdrop()
         val density = LocalDensity.current
         val statusBar = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
         val navBar = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
         val reduce = LocalReduceMotion.current
         Box(Modifier.fillMaxSize()) {
-            // The screens are recorded so the edge strips can blur what scrolls under them.
-            Box(Modifier.fillMaxSize().layerBackdrop(content)) {
+            Box(Modifier.fillMaxSize()) {
                 // Back (Android's predictive back, iOS's edge swipe) drives the pop transition itself. It
                 // pops through the shell's navigator: by the time it lands the gesture has already played
                 // the transition, so it must not be refused.
@@ -363,8 +341,8 @@ private fun MainShell(overlays: OverlayHost) {
                     },
                 )
             }
-            EdgeBlur(content, top = true, height = statusBar + 18.dp, solid = statusBar, modifier = Modifier.align(Alignment.TopCenter))
-            BottomStrip(content, atRoot, navBar, Modifier.align(Alignment.BottomCenter))
+            EdgeBlur(top = true, height = statusBar + 18.dp, solid = statusBar, modifier = Modifier.align(Alignment.TopCenter))
+            BottomStrip(atRoot, navBar, Modifier.align(Alignment.BottomCenter))
             if (navbar == null) {
                 AndroidDock(
                     visible = dockVisible,
@@ -385,14 +363,14 @@ private fun MainShell(overlays: OverlayHost) {
  * composable, so the per-frame height recomposes only the strip, not the shell.
  */
 @Composable
-private fun BottomStrip(content: Backdrop, atRoot: Boolean, navBar: Dp, modifier: Modifier) {
+private fun BottomStrip(atRoot: Boolean, navBar: Dp, modifier: Modifier) {
     val dock by animateFloatAsState(
         if (atRoot) 1f else 0f,
         if (LocalReduceMotion.current) snap() else tween(Durations.Page, easing = Easings.Standard),
         label = "bottomStrip",
     )
     EdgeBlur(
-        content, top = false,
+        top = false,
         height = navBar + lerp(12.dp, 104.dp, dock),
         solid = navBar + lerp(0.dp, 64.dp, dock),
         modifier = modifier,
@@ -492,58 +470,6 @@ private fun RouteContent(route: Route) {
     }
 }
 
-/** Android: a Kyant liquid-glass dock with the four tabs, plus a separate round + for new routines. */
+/** Android's liquid-glass dock with the four tabs and a round + for new routines; iOS has the native tab bar. */
 @Composable
-private fun AndroidDock(visible: Boolean, selected: Tab, onSelect: (Tab) -> Unit, onAction: () -> Unit, modifier: Modifier = Modifier) {
-    val c = Volum.colors
-    val reduce = LocalReduceMotion.current
-    val pane = rememberLiquidPane()
-    val alpha = remember { Animatable(if (visible) 1f else 0f) }
-    LaunchedEffect(visible) {
-        alpha.animateTo(if (visible) 1f else 0f, if (visible) tween(Durations.Enter, easing = Easings.Enter) else tween(Durations.Exit, easing = Easings.Exit))
-    }
-    // Read through derivedStateOf: the fade itself runs in the graphics layer below, so the dock
-    // (and its liquid tabs) recompose only when it fully hides or shows, not on every fade frame.
-    val gone by remember { androidx.compose.runtime.derivedStateOf { alpha.value == 0f } }
-    if (gone && !visible) return
-    // The iOS bar's filled symbols, on every tab.
-    val tabIcons = remember { listOf(Icons.TabHome, Icons.TabHistory, Icons.TabLifts, Icons.TabProfile) }
-    Row(
-        modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
-            .graphicsLayer { this.alpha = alpha.value; translationY = if (reduce) 0f else (1f - alpha.value) * 40.dp.toPx() },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        LiquidTabs(
-            count = Tab.entries.size,
-            selectedIndex = selected.ordinal,
-            onSelect = { onSelect(Tab.entries[it]) },
-            backdrop = LocalBackdrop.current,
-            accent = c.accent,
-            // What the selection drop shows the pane as: a solid stand-in for the glass below.
-            container = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.66f),
-            // The mockups' `.lg` glass: a white gradient (not a dark tint) with its rim and sheen.
-            surface = pane,
-            // iOS's selected-tab platter: the bar's glass a shade darker, tinted by what's behind it
-            // (sage here), over the near-white stand-in the selection draws on.
-            selection = androidx.compose.ui.graphics.Color(0xFF5F7F45).copy(alpha = 0.24f),
-            modifier = Modifier.weight(1f),
-            height = 62.dp,
-            frosted = !glassEffects(),
-            onCross = { hapticTick() },
-        ) { index, tinted ->
-            // As on iOS, only the colour (and the icon's fill) changes: the label keeps its weight.
-            val ink = if (tinted) c.accent else c.ink
-            Icon(tabIcons[index], ink, size = 26.dp)
-            Txt(Tab.entries[index].label, size = T.Tiny, weight = Bold, color = ink, maxLines = 1)
-        }
-        Box(
-            Modifier.size(62.dp).tappable(haptic = true, onClick = onAction).liquidGlass(CircleShape).semantics { contentDescription = "New routine" },
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Plus, c.ink, size = 24.dp) }
-    }
-}
-
+internal expect fun AndroidDock(visible: Boolean, selected: Tab, onSelect: (Tab) -> Unit, onAction: () -> Unit, modifier: Modifier = Modifier)
