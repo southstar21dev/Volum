@@ -74,6 +74,7 @@ import dev.southstar21.volum.ui.theme.celebrate
 import dev.southstar21.volum.ui.theme.AnimatedNumber
 import kotlin.math.roundToInt
 import dev.southstar21.volum.util.formatVolume
+import dev.southstar21.volum.util.newId
 import dev.southstar21.volum.util.nowMillis
 import dev.southstar21.volum.util.parseTime
 import dev.southstar21.volum.util.plural
@@ -147,21 +148,23 @@ fun SessionScreen(workoutId: String) {
     fun replaceSet(entry: WorkoutEntry, set: SetEntry) = latest().map { e -> if (e.id == entry.id) e.copy(sets = e.sets.map { if (it.id == set.id) set else it }) else e }
 
     val routine = workout.routineId?.let { routines[it] }
-    // The routine in this session's order, when that's a change: offered from the workout menu.
-    val routineOrder = routine?.let { r -> applyOrderToRoutine(r.items, workout.entries).takeIf { it != r.items } }
+    // The routine made to match this session (exercises added, removed, renamed or moved), when that's a
+    // change: offered from the workout menu and when finishing. Your own routines only.
+    val routineUpdate = routine?.takeIf { it.owner == session.user.id }?.let { r -> applySessionToRoutine(r.items, workout.entries, ::newId).takeIf { it != r.items } }
+    val updateChanges = routineUpdate?.let { routineChanges(routine.items, it) }
     var orderPrompt by remember { mutableStateOf(false) }
     fun finish(saveOrder: Boolean) {
         haptic(Haptic.WorkoutDone)
         val r = routine
-        val order = routineOrder
+        val order = routineUpdate
         leave {
             if (saveOrder && r != null && order != null) repo.saveRoutine(r.id, r.name, order)
             repo.finishWorkout(workouts[workoutId] ?: workout)
         }
     }
-    // Finishing a workout whose exercises were moved first asks whether the routine should keep the order.
+    // Finishing a workout whose exercises differ from the routine first asks whether the routine should keep them.
     fun finish() {
-        if (routine != null && routineOrder != null) { haptic(Haptic.Tap); orderPrompt = true }
+        if (routine != null && routineUpdate != null) { haptic(Haptic.Tap); orderPrompt = true }
         else finish(saveOrder = false)
     }
     val library = remember(exercises) { exercises.values.filter { !it.deleted } }
@@ -381,9 +384,13 @@ fun SessionScreen(workoutId: String) {
         title = workout.routineName,
         actions = listOfNotNull(
             SheetAction("Rename workout", Icons.Pencil) { renameWorkout = true },
-            if (routine != null && routineOrder != null) {
-                SheetAction("Save order to routine", Icons.Grip, subtitle = "${routine.name} starts in this order next time") {
-                    scope.launch { repo.saveRoutine(routine.id, routine.name, routineOrder) }
+            if (routine != null && routineUpdate != null && updateChanges != null) {
+                if (updateChanges.beyondOrder) {
+                    SheetAction("Save changes to routine", Icons.Grip, subtitle = updateChanges.summary()) {
+                        scope.launch { repo.saveRoutine(routine.id, routine.name, routineUpdate) }
+                    }
+                } else SheetAction("Save order to routine", Icons.Grip, subtitle = "${routine.name} starts in this order next time") {
+                    scope.launch { repo.saveRoutine(routine.id, routine.name, routineUpdate) }
                 }
             } else null,
             SheetAction("Discard workout", Icons.Trash, destructive = true) { discardPrompt = true },
@@ -413,13 +420,14 @@ fun SessionScreen(workoutId: String) {
         onDismiss = { finishPrompt = false },
     )
     val promptName = rememberLast(routine?.name)
+    val lastChanges = rememberLast(updateChanges)
     ActionSheet(
         open = orderPrompt,
-        title = "Keep this order in ${promptName ?: "the routine"}?",
-        subtitle = "You moved exercises around in this workout.",
+        title = "Update ${promptName ?: "the routine"}?",
+        subtitle = lastChanges?.summary() ?: "You changed this workout.",
         actions = listOf(
-            SheetAction("Save order and finish", Icons.Check, subtitle = "${promptName ?: "The routine"} starts in this order next time") { finish(saveOrder = true) },
-            SheetAction("Just finish", Icons.ArrowRight) { finish(saveOrder = false) },
+            SheetAction("Update ${promptName ?: "the routine"}", Icons.Check, subtitle = "It starts like this next time") { finish(saveOrder = true) },
+            SheetAction("Keep routine as is", Icons.ArrowRight) { finish(saveOrder = false) },
         ),
         onDismiss = { orderPrompt = false },
     )
