@@ -41,6 +41,7 @@ actual object SecureStore {
             return@synchronized try {
                 decrypt(bytes)
             } catch (e: Exception) {
+                logWarn("SecureStore", "Couldn't decrypt $key", e)
                 // Undecryptable (the Keystore key was lost or broken, the file damaged) is the same as
                 // signed out, for good: drop the file so it isn't tried on every launch, and a key
                 // that is itself the problem, so the next sign-in is saved with a working one.
@@ -88,9 +89,15 @@ actual object SecureStore {
             val target = file(key)
             target.parentFile?.mkdirs()
             val tmp = File(target.path + ".tmp")
-            tmp.writeBytes(sealed)
-            check(tmp.renameTo(target))
-        }.isSuccess
+            try {
+                tmp.writeBytes(sealed)
+                check(tmp.renameTo(target))
+            } catch (e: Exception) {
+                // No orphaned half-written file next to the real one.
+                runCatching { tmp.delete() }
+                throw e
+            }
+        }.onFailure { logWarn("SecureStore", "Couldn't write $key", it) }.isSuccess
     }
 
     /** A failure that says the key itself is unusable, not the data it was given. */
@@ -113,7 +120,9 @@ actual object SecureStore {
     }
 
     private fun decrypt(bytes: ByteArray): String {
-        val ivSize = bytes[0].toInt()
+        // An empty (truncated) file is as undecryptable as a damaged one; the IV length is an unsigned byte.
+        require(bytes.isNotEmpty())
+        val ivSize = bytes[0].toInt() and 0xFF
         require(ivSize in 1..<bytes.size)
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(TAG_BITS, bytes, 1, ivSize))

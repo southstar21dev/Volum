@@ -10,6 +10,8 @@ import dev.southstar21.volum.model.Workout
 import dev.southstar21.volum.model.WorkoutEntry
 import dev.southstar21.volum.platform.SecureStore
 import dev.southstar21.volum.platform.appDataDirectory
+import dev.southstar21.volum.platform.cacheDirectory
+import dev.southstar21.volum.platform.logWarn
 import dev.southstar21.volum.platform.appVersion
 import dev.southstar21.volum.platform.isIos
 import dev.southstar21.volum.platform.createHttpClient
@@ -80,7 +82,7 @@ private data class SavedAuth(val token: String, val user: AuthUser)
  * Last resort for a failure nothing closer caught: a background task that dies is better than the
  * app closing mid-workout.
  */
-private val backstop = CoroutineExceptionHandler { _, _ -> }
+private val backstop = CoroutineExceptionHandler { _, e -> logWarn("Volum", "A background task failed", e) }
 
 /** Where the saved sign-in lives: [SecureStore] in the app, a fake in tests. */
 internal interface Secrets {
@@ -108,8 +110,17 @@ class AppContainer internal constructor(
     private val secrets: Secrets,
     internal val mainDispatcher: CoroutineDispatcher,
     private val ioDispatcher: CoroutineDispatcher,
+    /** Where downloaded photos are kept: apart from [root], so they stay out of backups. */
+    private val cacheRoot: Path = Path(root, IMAGE_CACHE_DIR),
 ) {
-    constructor() : this(Path(appDataDirectory()), PocketBase(pocketBaseUrl, createHttpClient(), appVersion, if (isIos) "ios" else "android"), PlatformSecrets, Dispatchers.Main, Dispatchers.IO)
+    constructor() : this(
+        Path(appDataDirectory()),
+        PocketBase(pocketBaseUrl, createHttpClient(), appVersion, if (isIos) "ios" else "android"),
+        PlatformSecrets,
+        Dispatchers.Main,
+        Dispatchers.IO,
+        Path(cacheDirectory(), IMAGE_CACHE_DIR),
+    )
 
     val scope = CoroutineScope(SupervisorJob() + mainDispatcher + backstop)
 
@@ -135,7 +146,7 @@ class AppContainer internal constructor(
     val updateRequired: StateFlow<UpdateRequired?> = _updateRequired.asStateFlow()
 
     /** Profile photos, cached on disk so they still show offline. */
-    val images = ImageCache(Path(root, IMAGE_CACHE_DIR), scope, ioDispatcher) { url -> pb.download(url) }
+    val images = ImageCache(cacheRoot, scope, ioDispatcher) { url -> pb.download(url) }
 
     /** One session at a time: a second login waits for the first to finish opening, then replaces it. */
     private val sessionLock = Mutex()
@@ -154,21 +165,33 @@ class AppContainer internal constructor(
     /** The last session's final write to disk; the next session waits for it before reading. */
     private var closing: Job? = null
 
+    /** The coroutine applying [diskWrites]. */
+    private val writer: Job
+
     init {
         pb.onUpdateRequired = { minVersion -> _updateRequired.value = UpdateRequired(minVersion) }
-        scope.launch(ioDispatcher) {
+        writer = scope.launch(ioDispatcher) {
             for (write in diskWrites) {
                 try {
                     write()
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     // Disk full or similar: the value stays in memory and the next change writes it again.
+                    logWarn("AppContainer", "Couldn't write prefs or the saved sign-in", e)
                 }
             }
         }
         scope.launch {
             val (device, saved) = withContext(ioDispatcher) {
+                // Folder work happens here, off the main thread that built the container.
+                try {
+                    ensureDirectory(root)
+                    // Photos used to be cached under the app data folder, which is backed up.
+                    JsonFiles.deleteTree(Path(root, IMAGE_CACHE_DIR))
+                } catch (e: Exception) {
+                    logWarn("AppContainer", "Couldn't prepare the app folder", e)
+                }
                 JsonFiles.read(Path(root, PREFS_FILE), DevicePrefs.serializer()) to readSavedAuth()
             }
             device?.let { devicePrefs = it }
@@ -178,12 +201,13 @@ class AppContainer internal constructor(
                     sessionLock.withLock {
                         pb.token = saved.token
                         _user.value = saved.user
-                        openSessionLocked(saved.user)
+                        openSessionOrResetLocked(saved.user)
                     }
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     // The local data couldn't be opened; the sign-in screen is a way out, a stuck splash isn't.
+                    logWarn("AppContainer", "Couldn't open the local data", e)
                 }
             }
             _ready.value = true
@@ -253,6 +277,23 @@ class AppContainer internal constructor(
         return saved
     }
 
+    /**
+     * [openSessionLocked], and when it fails (the local data can't be opened) the token and user set
+     * for it are dropped again: nothing may keep refreshing a sign-in the UI doesn't show. The saved
+     * sign-in stays on disk, so the next launch tries again. Call with [sessionLock] held.
+     */
+    private suspend fun openSessionOrResetLocked(user: AuthUser) {
+        try {
+            openSessionLocked(user)
+        } catch (e: Throwable) {
+            if (_session.value == null && _user.value?.id == user.id) {
+                pb.token = null
+                _user.value = null
+            }
+            throw e
+        }
+    }
+
     /** Call with [sessionLock] held, after setting the user and token. */
     private suspend fun openSessionLocked(user: AuthUser) {
         closeSession()
@@ -283,7 +324,7 @@ class AppContainer internal constructor(
         sessionLock.withLock {
             persistAuth(token, user)
             lastAuthRefresh = nowMillis()
-            openSessionLocked(user)
+            openSessionOrResetLocked(user)
         }
     }
 
@@ -323,7 +364,7 @@ class AppContainer internal constructor(
         if (_user.value?.id != user.id) return
         val updated = userOf(record)
         persistAuth(pb.token ?: return, updated)
-        _session.value?.user = updated
+        _session.value?.updateUser(updated)
     }
 
     /**
@@ -399,7 +440,8 @@ class AppContainer internal constructor(
                 // Refused, but for a token already replaced: the current one decides.
                 else -> if (pb.token != null) AuthCheck.Valid else AuthCheck.Invalid
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            logWarn("AppContainer", "Token refresh failed", e)
             AuthCheck.Unknown
         }
     }
@@ -467,6 +509,20 @@ class AppContainer internal constructor(
         }
     }
 
+    /**
+     * Shuts everything down: the open session is written out, pending prefs and sign-in writes are
+     * applied, then the scope is cancelled and the HTTP client closed. For tests and embedders; the
+     * apps keep one container for the life of the process and never call it.
+     */
+    suspend fun close() {
+        closeSession()
+        diskWrites.close()
+        writer.join()
+        closing?.join()
+        scope.cancel()
+        pb.close()
+    }
+
     private companion object {
         const val AUTH_KEY = "auth"
         const val PREFS_FILE = "prefs.json"
@@ -482,12 +538,24 @@ class AppContainer internal constructor(
 }
 
 /** Everything that belongs to the signed-in user: their local database, sync and partner state. */
-class UserSession(val app: AppContainer, var user: AuthUser, dir: Path) {
+class UserSession(val app: AppContainer, initialUser: AuthUser, dir: Path) {
+    private val _user = MutableStateFlow(initialUser)
+
+    /** The signed-in user, observable: a name or photo change reaches whoever collects it. */
+    val userState: StateFlow<AuthUser> = _user.asStateFlow()
+
+    /** The signed-in user as of now. Read [userState] where a change must recompose. */
+    val user: AuthUser get() = _user.value
+
+    internal fun updateUser(updated: AuthUser) {
+        _user.value = updated
+    }
+
     val scope = CoroutineScope(SupervisorJob() + app.mainDispatcher + backstop)
-    val store = LocalStore(dir, scope, user.id)
-    val repository = Repository(store, user.id)
+    val store = LocalStore(dir, scope, initialUser.id, WRITE_DELAY_MS)
+    val repository = Repository(store, initialUser.id)
     val sync = SyncEngine(
-        store, app.pb, repository, user.id, scope,
+        store, app.pb, repository, initialUser.id, scope,
         hasPartner = { partner.snapshot.value.partner != null },
         beforePush = { app.ensureFreshAuth() },
         authStillValid = { app.authStillValid() },
@@ -552,6 +620,8 @@ class UserSession(val app: AppContainer, var user: AuthUser, dir: Path) {
     }
 
     private companion object {
+        /** See [LocalStore]'s writeDelayMs: long enough to merge a burst of edits, short enough to be invisible. */
+        const val WRITE_DELAY_MS = 250L
         const val PARTNER_REPULL_DONE = "migration.partnerRepull"
     }
 

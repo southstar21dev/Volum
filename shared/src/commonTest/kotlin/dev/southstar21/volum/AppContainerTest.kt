@@ -208,6 +208,9 @@ class AppContainerTest {
             SystemFileSystem.sink(path).buffered().use { it.writeString(text) }
         }
 
+        /** exercises.json is a folder: the store can't read it, so the user's local data can't be opened. */
+        fun breakLocalData(userId: String) = write("users/$userId/exercises.json/x", "")
+
         fun exists(relative: String) = SystemFileSystem.exists(Path(root, relative))
 
         fun saveSignIn(user: AuthUser, token: String) {
@@ -296,6 +299,43 @@ class AppContainerTest {
     }
 
     // ---- Sign-in ----------------------------------------------------------------------------
+
+    @Test fun aSavedSignInWhoseLocalDataWontOpenLeavesNoOrphanedToken() = appTest { rig ->
+        rig.saveSignIn(alex, "t-alex")
+        rig.breakLocalData("ua")
+        val app = rig.start()
+        assertNull(app.user.value)
+        assertNull(app.session.value)
+        assertNull(app.pb.token, "nothing keeps refreshing a token the UI doesn't show")
+        assertNotNull(rig.secrets.values["auth"], "the saved sign-in is kept for the next launch")
+    }
+
+    @Test fun aLoginWhoseLocalDataWontOpenFailsWithoutLeavingTheTokenSet() = appTest { rig ->
+        rig.breakLocalData("ua")
+        val app = rig.start()
+        runCatching { app.login(alex.email, "pw") }.let { assertTrue(it.isFailure) }
+        assertNull(app.user.value)
+        assertNull(app.pb.token)
+    }
+
+    @Test fun theSessionsUserIsObservableAndChangesWithTheProfile() = appTest { rig ->
+        val app = rig.start()
+        app.login(alex.email, "pw")
+        val session = assertNotNull(app.session.value)
+        assertEquals(alex.id, session.userState.value.id)
+        session.updateUser(session.user.copy(name = "Renamed"))
+        assertEquals("Renamed", session.userState.value.name)
+        assertEquals("Renamed", session.user.name)
+    }
+
+    @Test fun closingTheContainerWritesPendingPrefs() = appTest { rig ->
+        val app = rig.start()
+        app.login(alex.email, "pw")
+        app.updatePrefs { it.copy(unit = WeightUnit.Lb) }
+        app.close()
+        val mine = assertNotNull(JsonFiles.read(Path(rig.root, "users/ua/prefs.json"), JsonObject.serializer()))
+        assertEquals("lb", mine["unit"]?.jsonPrimitive?.content)
+    }
 
     @Test fun aRefreshThatReturnsAfterASignOutAndANewSignInDoesNotBringTheOldOneBack() = appTest { rig ->
         rig.saveSignIn(alex, "old")

@@ -104,7 +104,29 @@ class AvatarTest {
 
     @Test fun cacheKeysAreSafeFileNames() {
         val key = ImageCache.keyOf("https://pb.test/api/files/users/ua/a_1.jpg?thumb=256x256")
-        assertEquals("api_files_users_ua_a_1.jpg_thumb_256x256", key)
+        assertEquals(32, key.length)
+        assertTrue(key.all { it in '0'..'9' || it in 'a'..'f' })
+        assertEquals(key, ImageCache.keyOf("https://pb.test/api/files/users/ua/a_1.jpg?thumb=256x256"))
+        // Dots, long URLs and a shared tail no longer matter: every URL gets its own name.
+        val tail = "x".repeat(300)
+        assertTrue(ImageCache.keyOf("https://a.test/1/$tail") != ImageCache.keyOf("https://a.test/2/$tail"))
+        assertEquals(32, ImageCache.keyOf("https://pb.test/..").length)
+    }
+
+    @Test fun theCacheFolderIsCappedAndKeepsTheNewestImage() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val dir = Path(SystemTemporaryDirectory, "volum-images-${newId()}")
+        val cache = ImageCache(dir, backgroundScope, dispatcher) { null }
+        try {
+            repeat(ImageCache.MAX_FILES + 10) { cache.put("https://pb.test/f/$it.jpg", byteArrayOf(it.toByte(), 1)) }
+            assertEquals(ImageCache.MAX_FILES, SystemFileSystem.list(dir).size)
+            assertTrue(cache.load("https://pb.test/f/${ImageCache.MAX_FILES + 9}.jpg") != null, "the newest is kept")
+        } finally {
+            if (SystemFileSystem.exists(dir)) {
+                SystemFileSystem.list(dir).forEach { SystemFileSystem.delete(it, mustExist = false) }
+                SystemFileSystem.delete(dir, mustExist = false)
+            }
+        }
     }
 
     // ---- Partner payloads -------------------------------------------------------------------

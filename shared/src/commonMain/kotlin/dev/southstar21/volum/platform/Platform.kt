@@ -7,6 +7,12 @@ import io.ktor.client.plugins.HttpTimeout
 /** Where this app keeps its local database files (one folder per signed-in user underneath). */
 expect fun appDataDirectory(): String
 
+/**
+ * Where re-downloadable files (profile photos) go: a folder the OS may clear and that is left out of
+ * backups. Like [appDataDirectory], only names the folder; creating it is the caller's job, off the main thread.
+ */
+expect fun cacheDirectory(): String
+
 /** A Ktor client on the platform's engine (OkHttp on Android, NSURLSession on iOS). */
 expect fun createHttpClient(): HttpClient
 

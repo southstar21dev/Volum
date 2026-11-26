@@ -81,6 +81,9 @@ class PocketBase(
 
     private fun url(path: String) = baseUrl.trimEnd('/') + path
 
+    /** Releases the HTTP client's connections and threads; the instance can't be used afterwards. */
+    fun close() = http.close()
+
     private suspend fun call(
         method: HttpMethod,
         path: String,

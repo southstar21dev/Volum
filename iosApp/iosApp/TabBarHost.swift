@@ -97,6 +97,9 @@ final class TabBarHost: UITabBarController, UITabBarControllerDelegate, IosTabBa
         return tab
     }()
 
+    /// The tabs in order, built once: render(state:) runs on every state change.
+    private lazy var wantedTabs: [UITab] = mainTabs + [actionTab]
+
     private var state: SystemNavbarState?
     private var hidden = true
 
@@ -117,7 +120,7 @@ final class TabBarHost: UITabBarController, UITabBarControllerDelegate, IosTabBa
     func render(state: SystemNavbarState) {
         loadViewIfNeeded()
         self.state = state
-        let wanted = mainTabs + [actionTab]
+        let wanted = wantedTabs
         if tabs.map(\.identifier) != wanted.map(\.identifier) {
             setTabs(wanted, animated: view.window != nil && view.alpha > 0)
         }

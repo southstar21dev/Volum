@@ -1,6 +1,7 @@
 package dev.southstar21.volum.platform
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -21,6 +22,9 @@ import platform.PhotosUI.PHPickerResult
 import platform.PhotosUI.PHPickerViewController
 import platform.PhotosUI.PHPickerViewControllerDelegateProtocol
 import platform.UIKit.UIApplication
+import platform.UIKit.UIWindow
+import platform.UIKit.UIWindowScene
+import platform.UIKit.UISceneActivationStateForegroundActive
 import platform.UIKit.UIGraphicsImageRenderer
 import platform.UIKit.UIGraphicsImageRendererFormat
 import platform.UIKit.UIImage
@@ -39,6 +43,8 @@ actual fun rememberPhotoPicker(onPicked: (ByteArray) -> Unit, onError: () -> Uni
     val failed by rememberUpdatedState(onError)
     // Held here: the picker keeps only a weak reference to its delegate.
     val delegate = remember { PhotoPickerDelegate({ picked(it) }, { failed() }) }
+    // The picker's answer can arrive after the screen is gone (an iCloud photo takes a while to load).
+    DisposableEffect(delegate) { onDispose { delegate.dispose() } }
     return remember(delegate) { { delegate.present() } }
 }
 
@@ -51,6 +57,12 @@ private class PhotoPickerDelegate(
     private val onPicked: (ByteArray) -> Unit,
     private val onError: () -> Unit,
 ) : NSObject(), PHPickerViewControllerDelegateProtocol {
+    private var disposed = false
+
+    fun dispose() {
+        disposed = true
+    }
+
     fun present() {
         val config = PHPickerConfiguration()
         config.filter = PHPickerFilter.imagesFilter
@@ -66,13 +78,20 @@ private class PhotoPickerDelegate(
         // Data, not a UIImage: UIImage(data:) reads HEIC and JPEG alike and keeps the EXIF orientation.
         result.itemProvider.loadDataRepresentationForTypeIdentifier("public.image") { data, _ ->
             val bytes = data?.let { UIImage(data = it) }?.let(::scaledJpeg)
-            dispatch_async(dispatch_get_main_queue()) { if (bytes != null) onPicked(bytes) else onError() }
+            dispatch_async(dispatch_get_main_queue()) {
+                if (disposed) return@dispatch_async
+                if (bytes != null) onPicked(bytes) else onError()
+            }
         }
     }
 }
 
 private fun topViewController(): UIViewController? {
-    var top = UIApplication.sharedApplication.keyWindow?.rootViewController
+    // UIApplication.keyWindow is deprecated and wrong with more than one scene: ask the active scene.
+    val scenes = UIApplication.sharedApplication.connectedScenes.filterIsInstance<UIWindowScene>()
+    val scene = scenes.firstOrNull { it.activationState == UISceneActivationStateForegroundActive } ?: scenes.firstOrNull()
+    val windows = scene?.windows?.filterIsInstance<UIWindow>().orEmpty()
+    var top = (windows.firstOrNull { it.isKeyWindow() } ?: windows.firstOrNull())?.rootViewController
     while (top?.presentedViewController != null) top = top.presentedViewController
     return top
 }

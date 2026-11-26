@@ -2,21 +2,24 @@ package dev.southstar21.volum.platform
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.darwin.Darwin
-import kotlinx.cinterop.ExperimentalForeignApi
 import platform.Foundation.NSApplicationSupportDirectory
-import platform.Foundation.NSFileManager
+import platform.Foundation.NSCachesDirectory
 import platform.Foundation.NSSearchPathForDirectoriesInDomains
 import platform.Foundation.NSUserDomainMask
 import platform.UIKit.UIImpactFeedbackGenerator
 import platform.UIKit.UIImpactFeedbackStyle
 import platform.UIKit.UISelectionFeedbackGenerator
 
-@OptIn(ExperimentalForeignApi::class)
+// Only the path: AppContainer creates the folder on its background dispatcher, not on Main at launch.
 actual fun appDataDirectory(): String {
     val base = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, true).first() as String
-    val dir = "$base/Volum"
-    NSFileManager.defaultManager.createDirectoryAtPath(dir, withIntermediateDirectories = true, attributes = null, error = null)
-    return dir
+    return "$base/Volum"
+}
+
+/** The Caches folder: not backed up to iCloud, and iOS may clear it when storage runs low. */
+actual fun cacheDirectory(): String {
+    val base = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, true).first() as String
+    return "$base/Volum"
 }
 
 actual fun createHttpClient(): HttpClient = HttpClient(Darwin) {
