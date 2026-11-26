@@ -130,6 +130,8 @@ fun reshapedSets(entry: WorkoutEntry, timed: Boolean): List<SetEntry> =
 /** Callbacks the list raises; the owner's session and a partner's session handle them differently. */
 data class EntryActions(
     val onSet: (entry: WorkoutEntry, set: SetEntry) -> Unit,
+    /** A nudge, as a change to the set's current value rather than the set the card was drawn with: quick taps stack. */
+    val onNudge: (entry: WorkoutEntry, setId: String, change: (SetEntry) -> SetEntry) -> Unit,
     val onToggleDone: (entry: WorkoutEntry, set: SetEntry) -> Unit,
     val onEditSet: (entry: WorkoutEntry, set: SetEntry) -> Unit,
     val onAddSet: (entry: WorkoutEntry) -> Unit,
@@ -216,7 +218,7 @@ private fun SetRow(index: Int, set: SetEntry, current: Boolean, timed: Boolean, 
     val weight = set.weightIn(preferred)
     val running = if (timed) Stopwatches.startedAt(set.id) else null
     // One frame clock per running hold, shared by the seconds slot and the timer below.
-    val elapsed = running?.let { rememberElapsed(it) }
+    val elapsed = running?.let { rememberElapsed(it, frameUntilMs = (set.seconds ?: 0) * 1000L) }
     // Becoming the current set eases in (its ring, glow and the nudges below) rather than snapping, as
     // does the step back of the sets around it.
     val cur by animateFloatAsState(if (current) 1f else 0f, Springs.settle(), label = "current")
@@ -290,20 +292,20 @@ private fun SetRow(index: Int, set: SetEntry, current: Boolean, timed: Boolean, 
                         val unit = nudgeUnit(set, preferred, actions.keepSetUnits)
                         val step = stepWeight(unit)
                         CircleButton(Icons.Minus, "Weight down ${formatWeightValue(step)} ${unit.label}", repeatable = true) {
-                            haptic(Haptic.Tap); actions.onSet(entry, nudgedSet(set, preferred, actions.keepSetUnits, up = false))
+                            haptic(Haptic.Tap); actions.onNudge(entry, set.id) { nudgedSet(it, preferred, actions.keepSetUnits, up = false) }
                         }
                         CircleButton(Icons.Plus, "Weight up ${formatWeightValue(step)} ${unit.label}", repeatable = true) {
-                            haptic(Haptic.Tap); actions.onSet(entry, nudgedSet(set, preferred, actions.keepSetUnits, up = true))
+                            haptic(Haptic.Tap); actions.onNudge(entry, set.id) { nudgedSet(it, preferred, actions.keepSetUnits, up = true) }
                         }
                     }
                 }
                 Row(Modifier.width(84.dp + 44.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (timed) {
-                        CircleButton(Icons.Minus, "5 seconds less", repeatable = true) { haptic(Haptic.Tap); actions.onSet(entry, set.copy(seconds = ((set.seconds ?: 0) - 5).coerceAtLeast(0))) }
-                        CircleButton(Icons.Plus, "5 seconds more", repeatable = true) { haptic(Haptic.Tap); actions.onSet(entry, set.copy(seconds = (set.seconds ?: 0) + 5)) }
+                        CircleButton(Icons.Minus, "5 seconds less", repeatable = true) { haptic(Haptic.Tap); actions.onNudge(entry, set.id) { it.copy(seconds = ((it.seconds ?: 0) - 5).coerceAtLeast(0)) } }
+                        CircleButton(Icons.Plus, "5 seconds more", repeatable = true) { haptic(Haptic.Tap); actions.onNudge(entry, set.id) { it.copy(seconds = (it.seconds ?: 0) + 5) } }
                     } else {
-                        CircleButton(Icons.Minus, "One rep fewer", repeatable = true) { haptic(Haptic.Tap); actions.onSet(entry, set.copy(reps = (set.reps - 1).coerceAtLeast(0))) }
-                        CircleButton(Icons.Plus, "One more rep", repeatable = true) { haptic(Haptic.Tap); actions.onSet(entry, set.copy(reps = set.reps + 1)) }
+                        CircleButton(Icons.Minus, "One rep fewer", repeatable = true) { haptic(Haptic.Tap); actions.onNudge(entry, set.id) { it.copy(reps = (it.reps - 1).coerceAtLeast(0)) } }
+                        CircleButton(Icons.Plus, "One more rep", repeatable = true) { haptic(Haptic.Tap); actions.onNudge(entry, set.id) { it.copy(reps = it.reps + 1) } }
                     }
                 }
             }

@@ -6,6 +6,10 @@ plugins {
     alias(libs.plugins.android.kmp.library)
 }
 
+composeCompiler {
+    stabilityConfigurationFiles.add(layout.projectDirectory.file("compose-stability.conf"))
+}
+
 // iOS gets the same build-time values as androidApp's BuildConfig, from the same Gradle properties.
 val generateIosBuildConfig = tasks.register("generateIosBuildConfig") {
     val versionName = providers.gradleProperty("volum.versionName")

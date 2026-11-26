@@ -53,6 +53,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -177,10 +178,11 @@ fun SessionBody(
             // How far through the workout you are, filling as sets are logged.
             val done = workout.entries.sumOf { e -> e.sets.count { it.done } }
             val progress by animateFloatAsState(done / total.toFloat(), Springs.settle(), label = "progress")
+            val fillBrush = remember(c.accentTop, c.accentBottom) { Brush.horizontalGradient(listOf(c.accentTop, c.accentBottom)) }
             Box(
                 Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp).fillMaxWidth().height(6.dp).background(c.line, CircleShape).drawBehind {
                     if (progress > 0f) drawRoundRect(
-                        Brush.horizontalGradient(listOf(c.accentTop, c.accentBottom)),
+                        fillBrush,
                         size = Size(size.width * progress, size.height),
                         cornerRadius = CornerRadius(size.height / 2),
                     )
@@ -378,6 +380,7 @@ fun SessionScreen(workoutId: String) {
 
     val actions = EntryActions(
         onSet = { entry, set -> save(replaceSet(entry, set)) },
+        onNudge = { entry, setId, change -> scope.launch { repo.mutateSet(workoutId, entry.id, setId, change) } },
         onToggleDone = { entry, set ->
             haptic(toggleHaptic(latest(), entry, set))
             val next = replaceSet(entry, set.copy(done = !set.done))
@@ -657,11 +660,14 @@ fun <T> AnimatedItems(items: List<T>, key: (T) -> String, itemModifier: (T) -> M
         if (id !in ids && st != null && !(st.isIdle && !st.currentState)) merged.add(i.coerceAtMost(merged.size), id)
     }
     order[0] = merged
-    states.keys.retainAll(merged.toSet())
+    // The transition states are snapshot state: moved to where they may be written, after composition.
+    SideEffect {
+        states.keys.retainAll(merged.toSet())
+        for ((id, st) in states) st.targetState = id in ids
+    }
     merged.forEach { id ->
         androidx.compose.runtime.key(id) {
             val st = states.getOrPut(id) { MutableTransitionState(id in initial).apply { targetState = true } }
-            st.targetState = id in ids
             val item = last[id]
             if (item != null) AnimatedVisibility(
                 visibleState = st,

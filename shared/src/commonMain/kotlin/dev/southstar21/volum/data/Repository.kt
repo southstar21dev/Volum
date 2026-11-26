@@ -163,35 +163,64 @@ class Repository(val store: LocalStore, val owner: String) {
         entries: List<WorkoutEntry>,
         basis: List<WorkoutEntry>? = null,
     ): Workout {
-        val record = store.transaction {
-            val existing = id?.let { workouts[it] }
-            val now = nowIso()
-            // [entries] is an edit of [basis], the copy the screen showed. A sync may have brought a
-            // partner's sets in since; they aren't the user's removals, so the edit is replayed onto
-            // the stored entries instead of replacing them.
-            val entries = if (existing != null && basis != null) rebaseEntries(basis, existing.entries, entries) else entries
-            // While a partner can edit the workout, what the owner removes is remembered like a
-            // partner's removals, so a merge with a server copy that still has it doesn't bring it back.
-            val active = existing?.takeIf { it.status == WorkoutStatus.Active && !it.deleted }
-            val record = Workout(
-                id = existing?.id ?: id ?: newId(),
-                owner = owner,
-                routineId = routineId ?: existing?.routineId,
-                routineName = routineName.trim().take(MAX_ROUTINE_NAME),
-                startedAt = startedAt ?: existing?.startedAt ?: now,
-                finishedAt = finishedAt ?: existing?.finishedAt,
-                status = status ?: existing?.status ?: WorkoutStatus.Active,
-                entries = stampChangedSets(existing?.entries, if (active != null) withRemovedSets(active.entries, entries) else entries, now),
-                removedEntryIds = if (active != null) removedEntries(active, entries) else existing?.removedEntryIds,
-                updatedAt = now,
-                deleted = existing?.deleted ?: false,
-            )
-            putWorkout(record)
-            queue(Collection.Workouts, record.id, payload(Workout.serializer(), record.copy(updated = null)))
-            record
-        }
+        val record = store.transaction { writeWorkout(id, routineId, routineName, startedAt, finishedAt, status, entries, basis) }
         announce()
         return record
+    }
+
+    private fun LocalStore.Tx.writeWorkout(
+        id: String?,
+        routineId: String?,
+        routineName: String,
+        startedAt: String?,
+        finishedAt: String?,
+        status: WorkoutStatus?,
+        entries: List<WorkoutEntry>,
+        basis: List<WorkoutEntry>?,
+    ): Workout {
+        val existing = id?.let { workouts[it] }
+        val now = nowIso()
+        // [entries] is an edit of [basis], the copy the screen showed. A sync may have brought a
+        // partner's sets in since; they aren't the user's removals, so the edit is replayed onto
+        // the stored entries instead of replacing them.
+        val entries = if (existing != null && basis != null) rebaseEntries(basis, existing.entries, entries) else entries
+        // While a partner can edit the workout, what the owner removes is remembered like a
+        // partner's removals, so a merge with a server copy that still has it doesn't bring it back.
+        val active = existing?.takeIf { it.status == WorkoutStatus.Active && !it.deleted }
+        val record = Workout(
+            id = existing?.id ?: id ?: newId(),
+            owner = owner,
+            routineId = routineId ?: existing?.routineId,
+            routineName = routineName.trim().take(MAX_ROUTINE_NAME),
+            startedAt = startedAt ?: existing?.startedAt ?: now,
+            finishedAt = finishedAt ?: existing?.finishedAt,
+            status = status ?: existing?.status ?: WorkoutStatus.Active,
+            entries = stampChangedSets(existing?.entries, if (active != null) withRemovedSets(active.entries, entries) else entries, now),
+            removedEntryIds = if (active != null) removedEntries(active, entries) else existing?.removedEntryIds,
+            updatedAt = now,
+            deleted = existing?.deleted ?: false,
+        )
+        putWorkout(record)
+        queue(Collection.Workouts, record.id, payload(Workout.serializer(), record.copy(updated = null)))
+        return record
+    }
+
+    /**
+     * Applies [change] to one set of a stored workout, inside the store transaction so it reads the
+     * set as it is right now: quick taps on a nudge button each build on the one before, where a set
+     * captured by the screen would make them overwrite each other. Does nothing if the workout or set is gone.
+     */
+    suspend fun mutateSet(workoutId: String, entryId: String, setId: String, change: (SetEntry) -> SetEntry) {
+        val saved = store.transaction {
+            val existing = workouts[workoutId] ?: return@transaction false
+            val next = existing.entries.map { e ->
+                if (e.id == entryId) e.copy(sets = e.sets.map { if (it.id == setId) change(it) else it }) else e
+            }
+            if (next == existing.entries) return@transaction false
+            writeWorkout(workoutId, null, existing.routineName, null, null, null, next, existing.entries)
+            true
+        }
+        if (saved) announce()
     }
 
     /** [existing]'s removed exercises plus those missing from [entries]. */

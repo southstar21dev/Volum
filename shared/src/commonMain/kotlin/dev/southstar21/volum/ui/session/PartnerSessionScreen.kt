@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
 import dev.southstar21.volum.ui.components.ErrorText
@@ -70,6 +71,7 @@ import dev.southstar21.volum.util.plural
 import kotlinx.coroutines.CancellationException
 import androidx.compose.runtime.mutableLongStateOf
 import dev.southstar21.volum.util.nowMillis
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -141,11 +143,11 @@ fun PartnerSessionScreen(workoutId: String) {
         }
     }
 
-    fun mutate(m: WorkoutMutation) {
-        val current = workout ?: return
-        workout = current.copy(entries = applyWorkoutMutation(current.entries, m))
-        if (inFlight[0]++ == 0) waitingSince = nowMillis()
-        scope.launch {
+    // Edits go to the server one at a time, in the order they were made: sent concurrently, two nudges
+    // (or an AddSet and the Set after it) could land out of order and revert each other.
+    val outbox = remember(workoutId) { Channel<WorkoutMutation>(Channel.UNLIMITED) }
+    LaunchedEffect(outbox) {
+        for (m in outbox) {
             try {
                 // Counted down however the call ends, or receive() would ignore every later server copy.
                 val answer = try { session.partner.mutate(workoutId, m) } finally { if (--inFlight[0] == 0) waitingSince = null }
@@ -159,10 +161,22 @@ fun PartnerSessionScreen(workoutId: String) {
         }
     }
 
+    fun mutate(m: WorkoutMutation) {
+        val current = workout ?: return
+        workout = current.copy(entries = applyWorkoutMutation(current.entries, m))
+        if (inFlight[0]++ == 0) waitingSince = nowMillis()
+        outbox.trySend(m)
+    }
+
     val partnerName = snapshot.partner?.displayName ?: "Partner"
     val library = remember(exercises) { exercises.values.filter { !it.deleted } }
     val actions = EntryActions(
         onSet = { entry, set -> mutate(WorkoutMutation.Set(entry.id, set.id, set)) },
+        // Built on the screen's copy, which each edit updates at once, so quick taps stack.
+        onNudge = { entry, setId, change ->
+            val now = workout?.entries?.firstOrNull { it.id == entry.id }?.sets?.firstOrNull { it.id == setId }
+            if (now != null) mutate(WorkoutMutation.Set(entry.id, setId, change(now)))
+        },
         onToggleDone = { entry, set ->
             haptic(toggleHaptic(workout?.entries ?: listOf(entry), entry, set))
             mutate(WorkoutMutation.Set(entry.id, set.id, set.copy(done = !set.done)))

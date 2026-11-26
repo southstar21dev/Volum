@@ -33,6 +33,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -54,6 +55,7 @@ import dev.southstar21.volum.ui.theme.T
 import dev.southstar21.volum.ui.theme.Volum
 import dev.southstar21.volum.ui.theme.tappable
 import dev.southstar21.volum.util.nowMillis
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -70,7 +72,7 @@ object Stopwatches {
     /** Stops [setId]'s hold and returns how many whole seconds it ran. */
     fun stop(setId: String): Int {
         val at = started.remove(setId) ?: return 0
-        return ((nowMillis() - at) / 1000).toInt()
+        return heldSeconds(at, nowMillis())
     }
     fun cancel(setId: String) { started.remove(setId) }
     /** Drops the holds of sets that no longer exist. */
@@ -201,17 +203,34 @@ fun ForgetRemovedHolds(setIds: Set<String>) {
 }
 
 /** "0:07", "1:32": a running hold reads as a clock. */
-fun clockLabel(seconds: Int): String = "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
+fun clockLabel(seconds: Int): String {
+    val s = seconds.coerceAtLeast(0)
+    return "${s / 60}:${(s % 60).toString().padStart(2, '0')}"
+}
+
+/** Milliseconds a hold started at [startedAt] has run at [now]; never negative, even if the clock was set back meanwhile. */
+internal fun heldMillis(startedAt: Long, now: Long): Long = (now - startedAt).coerceAtLeast(0)
+
+/** Whole seconds a hold started at [startedAt] has run at [now]. */
+internal fun heldSeconds(startedAt: Long, now: Long): Int = (heldMillis(startedAt, now) / 1000).toInt()
 
 /**
  * Milliseconds since [startedAt], ticking every frame while it's on screen. Read it in a draw lambda or
- * through [derivedStateOf], so the frames redraw or recompose only what changes.
+ * through [derivedStateOf], so the frames redraw or recompose only what changes. Frames only matter to
+ * a bar filling toward a target: from [frameUntilMs] on (the target; 0 for none) it ticks once a
+ * second instead, which is all the clock needs.
  */
 @Composable
-fun rememberElapsed(startedAt: Long): LongState {
-    val elapsed = remember(startedAt) { mutableLongStateOf(nowMillis() - startedAt) }
-    LaunchedEffect(startedAt) {
-        while (true) withFrameMillis { elapsed.longValue = nowMillis() - startedAt }
+fun rememberElapsed(startedAt: Long, frameUntilMs: Long = Long.MAX_VALUE): LongState {
+    val elapsed = remember(startedAt) { mutableLongStateOf(heldMillis(startedAt, nowMillis())) }
+    LaunchedEffect(startedAt, frameUntilMs) {
+        while (true) {
+            if (elapsed.longValue < frameUntilMs) withFrameMillis { elapsed.longValue = heldMillis(startedAt, nowMillis()) }
+            else {
+                elapsed.longValue = heldMillis(startedAt, nowMillis())
+                delay(1000 - elapsed.longValue % 1000)
+            }
+        }
     }
     return elapsed
 }
@@ -263,12 +282,13 @@ fun HoldTimer(setId: String, elapsed: LongState?, target: Int, onLog: (seconds: 
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (target > 0) {
             val fill by animateColorAsState(if (beaten) c.accentTop else c.accent.copy(alpha = 0.55f), tween(300), label = "hold fill")
+            val gel = remember(c.accentTop, c.accentBottom) { Brush.horizontalGradient(listOf(c.accentTop, c.accentBottom)) }
             Box(
                 Modifier.fillMaxWidth().height(8.dp).background(c.line, CircleShape).drawBehind {
                     val fraction = (elapsed.longValue / (target * 1000f)).coerceIn(0f, 1f)
                     val r = size.height / 2
                     drawRoundRect(
-                        if (beaten) Brush.horizontalGradient(listOf(c.accentTop, c.accentBottom)) else Brush.horizontalGradient(listOf(fill, fill)),
+                        if (beaten) gel else SolidColor(fill),
                         size = Size(size.width * fraction, size.height),
                         cornerRadius = CornerRadius(r),
                     )
