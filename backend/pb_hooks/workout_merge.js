@@ -4,8 +4,10 @@
 // WorkoutMerge.kt mirrors this file. The JSON fixtures in test-fixtures/workout-merge run
 // against both (backend/tests/workout_merge.test.js and WorkoutMergeParityTest.kt).
 
+// Limits sit above anything the app can produce (names are capped at 200 in the app; a timed set's
+// seconds and a rep count are whole numbers). partner_util.js validates /mutate with these same checks.
 const MAX_NAME = 200;
-const MAX_NOTE = 1000;
+const MAX_NOTE = 2000;
 const MAX_NUMBER = 100000;
 
 // PocketBase dates read "2026-10-20 10:00:00.000Z"; make them ISO before parsing.
@@ -211,4 +213,4 @@ function mergeEntries(serverEntries, snapshotEntries, snapshotAt, removedEntryId
   return merged;
 }
 
-module.exports = { applyMutation, mergeEntries, stampAfter, asList };
+module.exports = { applyMutation, mergeEntries, stampAfter, asList, isObject, pickChecked, SET_FIELD_CHECKS, ENTRY_FIELD_CHECKS };

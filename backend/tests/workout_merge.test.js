@@ -44,7 +44,7 @@ test("field types, enums and ranges are checked", () => {
   const now = "2026-01-01T10:00:00.000Z";
   const set = (patch) => applyMutation(entries, { kind: "set", entryId: "e1", setId: "s1", patch }, now);
   const entry = (patch) => applyMutation(entries, { kind: "updateEntry", entryId: "e1", patch }, now);
-  for (const bad of [{ unit: "stone" }, { tag: "failure" }, { reps: 1.5 }, { reps: "8" }, { weight: Infinity }, { weight: 1e9 }, { done: "yes" }, { note: 5 }, { note: "x".repeat(1001) }]) {
+  for (const bad of [{ unit: "stone" }, { tag: "failure" }, { reps: 1.5 }, { reps: "8" }, { weight: Infinity }, { weight: 1e9 }, { done: "yes" }, { note: 5 }, { note: "x".repeat(2001) }]) {
     assert.equal(set(bad), null, JSON.stringify(bad));
   }
   for (const bad of [{ name: 123 }, { name: "x".repeat(201) }, { skipped: "true" }, { exerciseId: "" }]) {
@@ -71,4 +71,22 @@ test("stampAfter keeps the time when it is later than everything stored", () => 
   assert.equal(stampAfter("2026-01-01T10:00:09.000Z", entries), "2026-01-01T10:00:09.000Z");
   assert.equal(stampAfter("2026-01-01T10:00:01.000Z", entries), "2026-01-01T10:00:05.001Z");
   assert.equal(stampAfter("2026-01-01T10:00:01.000Z", null), "2026-01-01T10:00:01.000Z");
+});
+
+test("validMutation and applyMutation accept and refuse the same values", () => {
+  const { validMutation } = require("../pb_hooks/partner_util.js");
+  const now = "2026-01-01T10:00:00.000Z";
+  const entries = [{ id: "e1", exerciseId: "x", name: "Squat", sets: [{ id: "s1", weight: 0, reps: 0 }] }];
+  const note = (n) => ({ kind: "set", entryId: "e1", setId: "s1", patch: { note: "x".repeat(n) } });
+  const reps = (n) => ({ kind: "set", entryId: "e1", setId: "s1", patch: { reps: n } });
+  const seconds = (n) => ({ kind: "set", entryId: "e1", setId: "s1", patch: { seconds: n } });
+  const exercise = (n) => ({ kind: "updateEntry", entryId: "e1", patch: { exerciseId: "x".repeat(n) } });
+  const cases = [note(2000), note(2001), reps(8), reps(8.5), seconds(90), seconds(90.5), seconds(86401), seconds(100001), exercise(200), exercise(201)];
+  for (const m of cases) {
+    assert.equal(validMutation(m), applyMutation(entries, m, now) !== null, JSON.stringify(m).slice(0, 80));
+  }
+  assert.equal(validMutation(note(2000)), true);
+  assert.equal(validMutation(note(2001)), false);
+  assert.equal(validMutation(reps(8.5)), false);
+  assert.equal(validMutation(seconds(86401)), true);
 });
