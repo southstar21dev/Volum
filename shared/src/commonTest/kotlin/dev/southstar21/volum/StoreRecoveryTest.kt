@@ -524,6 +524,57 @@ class StoreRecoveryTest {
         }
     }
 
+    /** With a write delay, a burst of changes is one write after the delay; flushNow doesn't wait for it. */
+    @Test fun aWriteDelayMergesABurstIntoOneWriteAndFlushNowSkipsIt() = runTest {
+        inFolder {
+            val scheduler = TestCoroutineScheduler()
+            val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(scheduler))
+            try {
+                val store = LocalStore(dir, scope, null, 250)
+                store.load()
+                store.transaction { putMeta("n", "1") }
+                scheduler.runCurrent()
+                assertFalse(exists("meta.json"), "still inside the delay")
+                store.transaction { putMeta("n", "2") }
+                store.transaction { putMeta("n", "3") }
+                scheduler.advanceTimeBy(300)
+                withContext(Dispatchers.Default) {
+                    withTimeout(10_000) {
+                        while (JsonFiles.read(path("meta.json"), metaTable) == null) {
+                            scheduler.runCurrent()
+                            delay(5)
+                        }
+                        // Let the writer finish and release its file lock before flushNow wants it.
+                        repeat(10) { scheduler.runCurrent(); delay(5) }
+                    }
+                }
+                assertEquals(mapOf("n" to "3"), JsonFiles.read(path("meta.json"), metaTable))
+
+                store.transaction { putMeta("n", "4") }
+                store.flushNow()
+                assertEquals(mapOf("n" to "4"), JsonFiles.read(path("meta.json"), metaTable))
+            } finally {
+                scope.cancel()
+            }
+        }
+    }
+
+    /** The on-disk format is unchanged, so what an earlier build wrote loads whole (all five files, read side by side). */
+    @Test fun tablesWrittenByAnEarlierBuildAllLoad() = runTest {
+        inFolder {
+            write("workouts.json", enc(workoutTable, mapOf("w1" to workout("w1"))))
+            write("meta.json", enc(metaTable, mapOf("theme" to "dark")))
+            write("exercises.json", "{}")
+            write("routines.json", "{}")
+            write("outbox.json", "[]")
+            val disk = open()
+            disk.store.load()
+            assertEquals(setOf("w1"), disk.store.workouts.value.keys)
+            assertEquals(mapOf("theme" to "dark"), disk.store.meta.value)
+            assertTrue(quarantined("workouts.json").isEmpty())
+        }
+    }
+
     private companion object {
         const val OWNER = "me"
         const val T0 = "2026-01-01T10:00:00.000Z"
