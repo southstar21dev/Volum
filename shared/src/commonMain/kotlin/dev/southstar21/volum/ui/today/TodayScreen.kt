@@ -65,7 +65,6 @@ import dev.southstar21.volum.model.Routine
 import dev.southstar21.volum.model.Workout
 import dev.southstar21.volum.progress.Sentence
 import dev.southstar21.volum.progress.buildDashboard
-import dev.southstar21.volum.progress.countPrsThisWeek
 import dev.southstar21.volum.ui.LocalApp
 import dev.southstar21.volum.ui.LocalDockPadding
 import dev.southstar21.volum.ui.LocalNav
@@ -241,7 +240,7 @@ fun TodayScreen() {
         WeekStrip(ownWorkouts, now)
 
         dashboard?.weeks?.takeIf { it.size > 1 }?.let { weeks ->
-            val prs = rememberTicking(workouts, tick = now) { at -> countPrsThisWeek(workouts.values.toList(), user.id, at) }
+            val prs = dashboard.prsThisWeek
             val today = localDateOf(now)
             val month = remember(ownWorkouts, today) { ownWorkouts.count { it.finishedAt != null && localDateOf(parseTime(it.finishedAt)).let { d -> d.year == today.year && d.month == today.month } } }
             VolumeCard(weeks.map { it.start to it.volumeKg }, prs, month, prefs.unit)

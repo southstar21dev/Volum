@@ -241,6 +241,25 @@ class LogicTest {
         assertEquals(Comparison.Worse, compareBest(bw(20), BestSet(10.0, WeightUnit.Kg, 10.0, 5, 0), WeightUnit.Kg))
     }
 
+    @Test fun movingFromBodyweightToAWeightedSetGivesAFiniteGain() {
+        val bw = BestSet(0.0, WeightUnit.Kg, 0.0, 10, 0)
+        val loaded = BestSet(10.0, WeightUnit.Kg, 10.0, 5, 0)
+        val cmp = assertIs<Comparison.Weight>(compareBest(loaded, bw, WeightUnit.Kg))
+        assertTrue(cmp.gain.isFinite())
+    }
+
+    @Test fun prCountingIsOneForwardPassOverEveryEarlierWorkout() {
+        val now = parseTime(day8) + 60_000
+        // Two earlier sessions: the heavier one sets the bar, so a lighter set this week is no record.
+        val a = session("a", day1, "bench", lift(60.0, 5))
+        val b = session("b", day1, "bench", lift(70.0, 5)).copy(finishedAt = isoOf(parseTime(day1) + 3_600_000))
+        assertEquals(0, countPrsThisWeek(listOf(a, b, session("c", day8, "bench", lift(65.0, 5))), "me", now))
+        assertEquals(1, countPrsThisWeek(listOf(a, b, session("c", day8, "bench", lift(72.5, 5))), "me", now))
+        // The dashboard carries the same count, so the screen need not recompute it.
+        val dash = assertNotNull(buildDashboard(listOf(a, b, session("c", day8, "bench", lift(72.5, 5))), "me", mapOf("bench" to "Bench"), WeightUnit.Kg, now))
+        assertEquals(1, dash.prsThisWeek)
+    }
+
     @Test fun moreBodyweightRepsThanEverBeforeIsAPersonalRecord() {
         val now = parseTime(day8) + 60_000
         val before = session("a", day1, "pullup", lift(0.0, 10))
