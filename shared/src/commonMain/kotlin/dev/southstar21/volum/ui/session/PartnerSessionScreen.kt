@@ -46,6 +46,7 @@ import dev.southstar21.volum.model.WorkoutEntry
 import dev.southstar21.volum.model.WorkoutStatus
 import dev.southstar21.volum.ui.LocalApp
 import dev.southstar21.volum.ui.LocalNav
+import dev.southstar21.volum.ui.Route
 import dev.southstar21.volum.ui.LocalSession
 import dev.southstar21.volum.ui.exercisesState
 import dev.southstar21.volum.ui.components.ActionSheet
@@ -236,7 +237,7 @@ fun PartnerSessionScreen(workoutId: String) {
             )
             Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(start = 16.dp, end = 16.dp, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 CircleButton(Icons.Plus, "Add exercise for $partnerName", size = 58.dp, iconSize = 22.dp) { addOpen = true }
-                GlassButton("Back to my session", Modifier.weight(1f), height = 58.dp, icon = Icons.ChevronLeft) { nav.pop() }
+                GlassButton(if (nav.stack.any { it.route is Route.Session }) "Back to my session" else "Back", Modifier.weight(1f), height = 58.dp, icon = Icons.ChevronLeft) { nav.pop() }
             }
         }
     }
