@@ -142,12 +142,12 @@ fun PartnerSessionScreen(workoutId: String) {
         }
     }
 
-    fun mutate(m: WorkoutMutation) {
+    fun mutateAll(batch: List<WorkoutMutation>) {
         val current = workout ?: return
-        workout = current.copy(entries = applyWorkoutMutation(current.entries, m))
+        workout = current.copy(entries = batch.fold(current.entries) { entries, m -> applyWorkoutMutation(entries, m) })
         if (inFlight[0]++ == 0) waitingSince = nowMillis()
         // Sent in order on the session's scope (see MutationQueue), so edits still waiting when this screen is left go out anyway.
-        session.partner.enqueueMutation(workoutId, m) { result ->
+        session.partner.enqueueMutations(workoutId, batch) { result ->
             // Counted down however the call ends, or receive() would ignore every later server copy.
             if (--inFlight[0] == 0) waitingSince = null
             result.onSuccess { it?.let(::receive) }
@@ -157,6 +157,8 @@ fun PartnerSessionScreen(workoutId: String) {
             }
         }
     }
+
+    fun mutate(m: WorkoutMutation) = mutateAll(listOf(m))
 
     val partnerName = snapshot.partner?.displayName ?: "Partner"
     val library = remember(exercises) { exercises.values.filter { !it.deleted } }
@@ -278,9 +280,14 @@ fun PartnerSessionScreen(workoutId: String) {
                 mutate(WorkoutMutation.UpdateEntry(e.id, name = name))
             } else {
                 val current = workout?.entries?.firstOrNull { it.id == e.id } ?: e
-                mutate(WorkoutMutation.UpdateEntry(e.id, name = link.name, exerciseId = link.id, timed = link.isTimed))
-                // Relinked to a lift tracked the other way (time or reps), its sets change shape too.
-                if (current.isTimed != link.isTimed) current.sets.forEach { set -> mutate(WorkoutMutation.Set(e.id, set.id, reshapeSet(set, link.isTimed))) }
+                // Relinked to a lift tracked the other way (time or reps), its sets change shape too: all one request.
+                val relink = WorkoutMutation.UpdateEntry(e.id, name = link.name, exerciseId = link.id, timed = link.isTimed)
+                val reshaped = if (current.isTimed == link.isTimed) {
+                    emptyList()
+                } else {
+                    current.sets.map { set -> WorkoutMutation.Set(e.id, set.id, reshapeSet(set, link.isTimed)) }
+                }
+                mutateAll(listOf(relink) + reshaped)
             }
         },
         onDismiss = { renameEntry = null },

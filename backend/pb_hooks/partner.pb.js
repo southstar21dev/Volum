@@ -314,18 +314,17 @@ routerAdd(
   $apis.requireAuth(),
 );
 
-// Applies one set mutation to an active workout inside a transaction, so a
-// partner's edit can't race the owner's sync and silently drop either change.
+// Applies a partner's mutation (or, as `mutations`, a batch of up to 50 applied in order, all or
+// nothing) to an active workout inside a transaction, so an edit can't race the owner's sync and
+// silently drop either change.
 routerAdd(
   "POST",
   "/api/volum/partner/workout/{id}/mutate",
   (e) => {
-    const { applyMutation } = require(`${__hooks}/workout_merge.js`);
-    const { parseList, findUser, validMutation, withId } = require(`${__hooks}/partner_util.js`);
+    const { parseList, findUser, mutationsOf, applyMutations } = require(`${__hooks}/partner_util.js`);
     const id = e.request.pathValue("id");
-    const body = e.requestInfo().body || {};
-    const mutation = body.mutation;
-    if (!validMutation(mutation)) {
+    const mutations = mutationsOf(e.requestInfo().body);
+    if (!mutations) {
       throw new BadRequestError("Invalid change");
     }
 
@@ -354,35 +353,23 @@ routerAdd(
         }
       }
 
-      const stored = parseList(workout.getString("entries"));
-      if (mutation.kind !== "addEntry") {
-        const target = stored.find((entry) => entry && entry.id === mutation.entryId);
-        // The exercise (or set) is already gone, or the set already added: a retry or a race
-        // with the owner. Nothing to change and nothing to record, so it succeeds as is.
-        const sets = target && Array.isArray(target.sets) ? target.sets : null;
-        const hasSet = (setId) => sets.some((set) => set && set.id === setId);
-        if (
-          !target ||
-          (mutation.kind === "addSet" && (!sets || hasSet(mutation.set.id))) ||
-          (mutation.kind === "removeSet" && (!sets || !hasSet(mutation.setId)))
-        ) {
-          saved = workout;
-          return;
-        }
-      }
-
       const now = new Date().toISOString();
-      const entries = applyMutation(stored, mutation, now);
-      if (!entries) {
+      const result = applyMutations(
+        parseList(workout.getString("entries")),
+        parseList(workout.getString("removedEntryIds")),
+        mutations,
+        now,
+      );
+      if (!result) {
         outcome = "invalid";
         return;
       }
-      workout.set("entries", entries);
-      if (mutation.kind === "removeEntry") {
-        workout.set("removedEntryIds", withId(parseList(workout.getString("removedEntryIds")), mutation.entryId));
+      if (result.changed) {
+        workout.set("entries", result.entries);
+        if (result.removedEntryIds !== null) workout.set("removedEntryIds", result.removedEntryIds);
+        workout.set("updatedAt", now);
+        txApp.save(workout);
       }
-      workout.set("updatedAt", now);
-      txApp.save(workout);
       saved = workout;
     });
 

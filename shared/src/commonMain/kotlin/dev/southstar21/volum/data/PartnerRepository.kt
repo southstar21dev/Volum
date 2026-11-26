@@ -30,6 +30,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.io.files.Path
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -195,14 +196,39 @@ class PartnerRepository(
         return decodeRecord(Workout.serializer(), result)
     }
 
-    private val queues = mutableMapOf<String, MutationQueue<WorkoutMutation, Workout?>>()
+    /**
+     * Applies [mutations] in order as one request (one transaction, all or nothing) and returns the
+     * stored workout. A server that doesn't know `mutations` yet answers 400, and then they are sent
+     * one by one, once, so the edit isn't lost before the backend is updated.
+     */
+    suspend fun mutateAll(id: String, mutations: List<WorkoutMutation>): Workout? {
+        if (mutations.size == 1) return mutate(id, mutations.single())
+        val body = buildJsonObject { put("mutations", JsonArray(mutations.map(::mutationJson))) }
+        val reply = try {
+            pb.send("/api/volum/partner/workout/${id.encodeURLPathPart()}/mutate", HttpMethod.Post, body)
+        } catch (e: PbException) {
+            if (e.status != BAD_REQUEST) throw e
+            var last: Workout? = null
+            for (m in mutations) last = mutate(id, m)
+            return last
+        }
+        val result = reply as? JsonObject ?: throw PbException(0, "Unexpected response from server")
+        return decodeRecord(Workout.serializer(), result)
+    }
+
+    private val queues = mutableMapOf<String, MutationQueue<List<WorkoutMutation>, Workout?>>()
 
     /**
      * Queues an edit of [workoutId] behind the earlier ones of that workout, sent in order on the
      * session's scope: leaving the screen doesn't drop what is still waiting. [onDone] gets the outcome.
      */
-    fun enqueueMutation(workoutId: String, mutation: WorkoutMutation, onDone: suspend (Result<Workout?>) -> Unit) {
-        queues.getOrPut(workoutId) { MutationQueue(scope) { mutate(workoutId, it) } }.submit(mutation, onDone)
+    fun enqueueMutation(workoutId: String, mutation: WorkoutMutation, onDone: suspend (Result<Workout?>) -> Unit) =
+        enqueueMutations(workoutId, listOf(mutation), onDone)
+
+    /** Like [enqueueMutation] for edits that go out together as one queue item (one request), in order. */
+    fun enqueueMutations(workoutId: String, mutations: List<WorkoutMutation>, onDone: suspend (Result<Workout?>) -> Unit) {
+        if (mutations.isEmpty()) return
+        queues.getOrPut(workoutId) { MutationQueue(scope) { mutateAll(workoutId, it) } }.submit(mutations, onDone)
     }
 
     /** Follows [workoutId]'s live changes on the stream [start] opened (nothing arrives while the app is in the background). */
@@ -237,6 +263,8 @@ class PartnerRepository(
         }
     }
 }
+
+private const val BAD_REQUEST = 400
 
 /** Set fields that can go from a value back to none. */
 private val CLEARABLE_SET_FIELDS = listOf("tag", "note", "seconds")

@@ -5,7 +5,9 @@ const ID_MAX = 100;
 const SETS_MAX = 200;
 const REMOVED_MAX = 5000;
 
-const { isObject, pickChecked, SET_FIELD_CHECKS, ENTRY_FIELD_CHECKS } = require("./workout_merge.js");
+const { applyMutation, isObject, pickChecked, SET_FIELD_CHECKS, ENTRY_FIELD_CHECKS } = require("./workout_merge.js");
+
+const BATCH_MAX = 50;
 
 /** A JSON column's text as an array: anything else ("null", an object, junk, empty) is []. */
 function parseList(text) {
@@ -83,4 +85,51 @@ function withId(list, id) {
   return next.length > REMOVED_MAX ? next.slice(next.length - REMOVED_MAX) : next;
 }
 
-module.exports = { parseList, findUser, findOne, validMutation, withId, REMOVED_MAX };
+/**
+ * The mutations a /mutate body carries: [body.mutation] as before, or the array [body.mutations]
+ * (at most BATCH_MAX). Null when the body is neither, or any item is invalid: a batch is all or nothing.
+ */
+function mutationsOf(body) {
+  if (!isObject(body)) return null;
+  if (body.mutations !== undefined) {
+    const list = body.mutations;
+    if (!Array.isArray(list) || list.length === 0 || list.length > BATCH_MAX || !list.every(validMutation)) return null;
+    return list;
+  }
+  return validMutation(body.mutation) ? [body.mutation] : null;
+}
+
+/**
+ * Applies validated mutations to the stored entries in order, exactly as if they were sent one by
+ * one: one whose exercise (or set) is already gone, or whose set is already added, changes nothing.
+ * Returns { entries, removedEntryIds (null when none was removed), changed }, or null when one of them is refused (the caller
+ * rejects the whole batch).
+ */
+function applyMutations(stored, removedEntryIds, mutations, now) {
+  let entries = stored;
+  let removed = null;
+  let changed = false;
+  for (const mutation of mutations) {
+    if (mutation.kind !== "addEntry") {
+      const target = entries.find((entry) => entry && entry.id === mutation.entryId);
+      // A retry or a race with the owner: nothing to change and nothing to record.
+      const sets = target && Array.isArray(target.sets) ? target.sets : null;
+      const hasSet = (setId) => sets.some((set) => set && set.id === setId);
+      if (
+        !target ||
+        (mutation.kind === "addSet" && (!sets || hasSet(mutation.set.id))) ||
+        (mutation.kind === "removeSet" && (!sets || !hasSet(mutation.setId)))
+      ) {
+        continue;
+      }
+    }
+    const next = applyMutation(entries, mutation, now);
+    if (!next) return null;
+    entries = next;
+    if (mutation.kind === "removeEntry") removed = withId(removed || removedEntryIds, mutation.entryId);
+    changed = true;
+  }
+  return { entries, removedEntryIds: removed, changed };
+}
+
+module.exports = { parseList, findUser, findOne, validMutation, mutationsOf, applyMutations, withId, REMOVED_MAX, BATCH_MAX };
