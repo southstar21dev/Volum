@@ -66,11 +66,12 @@ class Repository(val store: LocalStore, val owner: String) {
     /**
      * Renames one of the user's exercises and every item of the user's routines that points at it:
      * routine items carry their own copy of the name, and a new session takes the name from there.
-     * A partner's exercise or routine is never written (see [saveExercise]).
+     * A partner's exercise or routine is never written (see [saveExercise]). Returns null when the
+     * exercise is gone (deleted on another device and synced meanwhile): nothing is written then.
      */
-    suspend fun renameExercise(id: String, name: String): Exercise {
+    suspend fun renameExercise(id: String, name: String): Exercise? {
         val record = store.transaction {
-            val existing = exercises[id] ?: error("no exercise $id")
+            val existing = exercises[id] ?: return@transaction null
             if (existing.owner != owner) return@transaction existing
             // Rebuilt without the server's `updated`, like every local save: a record without it is one
             // a damaged outbox re-queues (LocalStore.requeueUnsynced).
@@ -87,7 +88,7 @@ class Repository(val store: LocalStore, val owner: String) {
                 }
             record
         }
-        if (record.owner == owner) announce()
+        if (record != null && record.owner == owner) announce()
         return record
     }
 

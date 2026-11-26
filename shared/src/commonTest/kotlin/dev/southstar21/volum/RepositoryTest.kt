@@ -278,8 +278,8 @@ class RepositoryTest {
         val renamed = repo.renameExercise("e1", "Bench press")
         runCurrent()
 
-        assertEquals("Bench press", renamed.name)
-        assertEquals(OWNER, renamed.owner)
+        assertEquals("Bench press", renamed?.name)
+        assertEquals(OWNER, renamed?.owner)
         assertEquals(renamed, store.exercises.value["e1"])
         assertEquals(row, store.exercises.value["e2"])
         assertEquals(
@@ -334,11 +334,11 @@ class RepositoryTest {
         assertEquals(0, writes())
     }
 
-    @Test fun renameExerciseOfAnUnknownIdFailsWithoutWriting() = runTest {
+    @Test fun renameExerciseOfAnUnknownIdReturnsNullWithoutWriting() = runTest {
         val store = newStore()
         val repo = Repository(store, OWNER)
 
-        assertFailsWith<IllegalStateException> { repo.renameExercise("missing", "Anything") }
+        assertNull(repo.renameExercise("missing", "Anything"))
         assertTrue(store.exercises.value.isEmpty())
         assertTrue(store.outbox.value.isEmpty())
     }
@@ -491,7 +491,7 @@ class RepositoryTest {
         assertEquals(MAX_ROUTINE_NAME, routine.name.length)
         assertEquals(MAX_ROUTINE_NAME, repo.saveWorkout(routineName = long, entries = listOf(entry("a"))).routineName.length)
         val lift = repo.saveExercise(name = "Bench")
-        assertEquals(MAX_EXERCISE_NAME, repo.renameExercise(lift.id, long).name.length)
+        assertEquals(MAX_EXERCISE_NAME, repo.renameExercise(lift.id, long)?.name?.length)
         assertEquals("Push A", repo.saveRoutine(name = "  Push A ", items = listOf(item("i2", "e1", "Bench"))).name)
     }
 
