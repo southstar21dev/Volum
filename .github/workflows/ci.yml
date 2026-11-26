@@ -3,9 +3,9 @@ name: CI
 on:
   push:
     branches: [dev, master]
-    paths-ignore: ["**.md", "docs/**", "backend/**"]
+    paths-ignore: ["**.md", "docs/**"]
   pull_request:
-    paths-ignore: ["**.md", "docs/**", "backend/**"]
+    paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch:
 
 concurrency:
@@ -33,6 +33,8 @@ jobs:
     outputs:
       # A manual run has nothing to diff against, so it always builds iOS.
       ios: ${{ steps.filter.outputs.ios == 'true' || github.event_name == 'workflow_dispatch' }}
+      # Everything but the server code, which the Gradle jobs don't build or test.
+      app: ${{ steps.filter.outputs.app == 'true' || github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,10 +49,32 @@ jobs:
               - "**"
               - "!androidApp/**"
               - "!backend/**"
+            app:
+              - "**"
+              - "!backend/**"
+
+  # The PocketBase hooks have no build of their own, so this is the only place they are tested. The
+  # merge tests read test-fixtures/workout-merge, which the Kotlin tests in the android job also run.
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+
+      - name: Backend tests
+        run: node --test backend/tests
 
   android:
     name: Shared tests and Android release build
     needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -67,9 +91,10 @@ jobs:
         with:
           cache-read-only: ${{ env.GRADLE_CACHE_READ_ONLY }}
 
-      # The release build runs R8, catching missing keep rules before they reach a release.
-      - name: Tests and release build
-        run: ./gradlew :shared:testAndroidHostTest :androidApp:assembleRelease --continue --stacktrace
+      # The release build runs R8, catching missing keep rules before they reach a release. Android
+      # Lint fails the build on errors only (it is clean today); detekt is not set up yet.
+      - name: Tests, lint and release build
+        run: ./gradlew :shared:testAndroidHostTest :androidApp:lintDebug :androidApp:assembleRelease --continue --stacktrace
 
       - name: Upload test reports
         if: failure()

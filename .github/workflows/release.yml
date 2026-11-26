@@ -91,6 +91,10 @@ jobs:
       - name: Install semantic-release
         run: npm ci
 
+      # The backend's merge and version-gate logic, which the apps depend on.
+      - name: Backend tests
+        run: node --test backend/tests
+
       - name: Install XcodeGen
         run: scripts/install-xcodegen.sh "$RUNNER_TEMP/xcodegen"
 
@@ -153,7 +157,8 @@ jobs:
     timeout-minutes: 60
     env:
       VERSION: ${{ needs.release.outputs.version || inputs.version }}
-      TEAM_ID: 3HNYQ2F575
+      # A repository variable can override the team; the fallback is the one Volum and Vectra share.
+      TEAM_ID: ${{ vars.APPLE_TEAM_ID || '3HNYQ2F575' }}
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
@@ -176,7 +181,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG=$(gh release view ${VERSION:+"v$VERSION"} -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          # A typed version is checked before it is used anywhere: it ends up in a tag name and in
+          # gradle.properties.
+          PATTERN='^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$'
+          if [ -n "$VERSION" ] && ! [[ "$VERSION" =~ $PATTERN ]]; then
+            echo "::error::Version '$VERSION' is not like 1.2.3 or 1.2.3-rc.4."
+            exit 1
+          fi
+          TAG_ARGS=()
+          if [ -n "$VERSION" ]; then TAG_ARGS=("v$VERSION"); fi
+          TAG=$(gh release view "${TAG_ARGS[@]}" -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          if ! [[ "${TAG#v}" =~ $PATTERN ]]; then
+            echo "::error::Release tag '$TAG' is not a version."
+            exit 1
+          fi
           echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
 
       - if: steps.key.outputs.ok == 'true'

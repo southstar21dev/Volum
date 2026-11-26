@@ -10,6 +10,9 @@ The PocketBase server the apps sync with (`volum.pocketbaseUrl` in `gradle.prope
   whole-workout push with the stored copy.
 - `pb_hooks/workout_merge.js`: the merge itself. `shared/.../data/WorkoutMerge.kt` mirrors it; keep
   the two in sync.
+- `tests/`: Node tests for the hooks (`npm run test:backend`, or `node --test backend/tests`). The merge
+  tests run the fixtures in `test-fixtures/workout-merge`, which `WorkoutMergeParityTest` runs against
+  the Kotlin merge too; change a merge rule in both places and add a fixture.
 - `pb_hooks/version_gate.pb.js`: refuses app builds older than a minimum with a 426 (see below).
   `pb_hooks/version_gate.js` holds the comparison.
 - `Dockerfile`, `start.sh`: the deployed image. Build it with this folder as the context.
