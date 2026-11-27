@@ -47,19 +47,26 @@ fun workingSets(entry: WorkoutEntry): List<SetEntry> =
 
 fun epley(weightKg: Double, reps: Int): Double = weightKg * (1 + reps / 30.0)
 
-fun bestSetIn(workouts: List<Workout>, exerciseId: String, maxReps: Int = MAX_COMPARE_REPS): BestSet? {
+/**
+ * Whether a set of [kg] × [reps] beats [best]: heavier, then more reps. For an [assisted] lift the logged
+ * weight is help, so less of it wins, then more reps.
+ */
+private fun beats(kg: Double, reps: Int, best: BestSet?, assisted: Boolean): Boolean =
+    best == null || (if (assisted) kg < best.weightKg else kg > best.weightKg) || (kg == best.weightKg && reps > best.reps)
+
+/** The best working set of [exerciseId] in [workouts]; the least help rather than the most load when [assisted]. */
+fun bestSetIn(workouts: List<Workout>, exerciseId: String, maxReps: Int = MAX_COMPARE_REPS, assisted: Boolean = false): BestSet? {
     var best: BestSet? = null
     for (w in workouts) {
         var timeValue = Long.MIN_VALUE
         for (entry in w.entries) {
             if (entry.exerciseId != exerciseId) continue
             for (set in workingSets(entry)) {
-                // The rep cap keeps high-rep sets out of load comparisons; a bodyweight set has no load,
-                // so its reps are the whole measure and always count.
+                // The rep cap keeps high-rep sets out of load comparisons; a bodyweight set has no load
+                // (nor an unassisted one any help), so its reps are the whole measure and always count.
                 if (set.reps > maxReps && set.weight > 0) continue
                 val kg = toKg(set.weight, set.unit)
-                val b = best
-                if (b == null || kg > b.weightKg || (kg == b.weightKg && set.reps > b.reps)) {
+                if (beats(kg, set.reps, best, assisted)) {
                     // Parsed only for a workout that actually holds a candidate, and once per workout.
                     if (timeValue == Long.MIN_VALUE) timeValue = workoutTime(w)
                     best = BestSet(set.weight, set.unit, kg, set.reps, timeValue)
@@ -75,6 +82,8 @@ sealed interface Comparison {
     data class Reps(val amount: String, val at: String, val gain: Double) : Comparison
     /** More reps at bodyweight, where there is no load to compare: "3 reps". */
     data class BodyweightReps(val amount: String, val gain: Double) : Comparison
+    /** Less help on an assisted lift: "10 kg" less. */
+    data class LessAssistance(val amount: String, val gain: Double) : Comparison
     data object Equal : Comparison
     data object Worse : Comparison
 }
@@ -91,7 +100,8 @@ fun formatLoad(value: Double, unit: WeightUnit, exact: Boolean): String {
     return "${trim2((value / step).roundToLong() * step)} ${unit.label}"
 }
 
-fun compareBest(now: BestSet, then: BestSet, unit: WeightUnit): Comparison {
+fun compareBest(now: BestSet, then: BestSet, unit: WeightUnit, assisted: Boolean = false): Comparison {
+    if (assisted) return compareAssisted(now, then, unit)
     if (now.isBodyweight && then.isBodyweight) {
         val d = now.reps - then.reps
         return when {
@@ -120,16 +130,55 @@ fun compareBest(now: BestSet, then: BestSet, unit: WeightUnit): Comparison {
     return Comparison.Equal
 }
 
-fun compareBestIn(now: BestSet, then: BestSet, thenWorkouts: List<Workout>, exerciseId: String, unit: WeightUnit): Comparison {
-    val cmp = compareBest(now, then, unit)
-    if (cmp !is Comparison.Weight && cmp !is Comparison.Reps && cmp !is Comparison.BodyweightReps) return cmp
+/**
+ * An assisted lift, where the logged weight is help: less of it is progress whatever the reps (the
+ * same order [bestSetIn] ranks by), and at the same help more reps are. Down to no help at all is
+ * the whole way, so it ranks as a full doubling against other lifts' gains.
+ */
+private fun compareAssisted(now: BestSet, then: BestSet, unit: WeightUnit): Comparison {
+    val exact = now.unit == unit && then.unit == unit
+    val nowW = convert(now.weight, now.unit, unit)
+    val thenW = convert(then.weight, then.unit, unit)
+    val amount = formatLoad(thenW - nowW, unit, exact)
+    val delta = amount.substringBefore(' ').toDoubleOrNull() ?: 0.0
+    if (delta > 0) return Comparison.LessAssistance(amount, (then.weightKg - now.weightKg) / then.weightKg)
+    if (delta < 0) return Comparison.Worse
+    val sameWeight = abs(now.weightKg - then.weightKg) < 0.01
+    if (!sameWeight) return if (now.weightKg > then.weightKg) Comparison.Worse else Comparison.Equal
+    val d = now.reps - then.reps
+    val more = "$d ${if (d == 1) "rep" else "reps"}"
+    val gain = now.reps.toDouble() / then.reps - 1
+    return when {
+        d < 0 -> Comparison.Worse
+        d == 0 -> Comparison.Equal
+        now.isBodyweight -> Comparison.BodyweightReps(more, gain)
+        else -> Comparison.Reps(more, "${formatLoad(nowW, unit, exact)} assist", gain)
+    }
+}
+
+private fun Comparison.isGain(): Boolean =
+    this is Comparison.Weight || this is Comparison.Reps || this is Comparison.BodyweightReps || this is Comparison.LessAssistance
+
+fun compareBestIn(
+    now: BestSet,
+    then: BestSet,
+    thenWorkouts: List<Workout>,
+    exerciseId: String,
+    unit: WeightUnit,
+    assisted: Boolean = false,
+): Comparison {
+    val cmp = compareBest(now, then, unit, assisted)
+    if (!cmp.isGain()) return cmp
     var dominated = false
     for (w in thenWorkouts) for (entry in w.entries) {
         if (entry.exerciseId != exerciseId) continue
         for (set in workingSets(entry)) {
             val kg = toKg(set.weight, set.unit)
-            if (kg < now.weightKg - 0.01 || set.reps < now.reps) continue
-            if (kg > now.weightKg + 0.01 || set.reps > now.reps) return Comparison.Worse
+            // An earlier set at least as good on both counts: as heavy (as little help) and as many reps.
+            val lighter = if (assisted) kg > now.weightKg + 0.01 else kg < now.weightKg - 0.01
+            val heavier = if (assisted) kg < now.weightKg - 0.01 else kg > now.weightKg + 0.01
+            if (lighter || set.reps < now.reps) continue
+            if (heavier || set.reps > now.reps) return Comparison.Worse
             dominated = true
         }
     }
@@ -146,7 +195,16 @@ const val WEEKS = 8
 
 data class WeekVolume(val start: LocalDate, val volumeKg: Double)
 
-data class Slide(val key: String, val name: String, val fullName: String, val amount: String, val lead: String, val value: String)
+/** One lift's improvement. [lessHelp]: an assisted lift that needs [amount] less help, not one that is up by it. */
+data class Slide(
+    val key: String,
+    val name: String,
+    val fullName: String,
+    val amount: String,
+    val lead: String,
+    val value: String,
+    val lessHelp: Boolean = false,
+)
 
 sealed interface Sentence {
     data class Improving(val slides: List<Slide>, val prs: Int, val monthWorkouts: Int) : Sentence
@@ -167,7 +225,15 @@ private data class Ranked(val slide: Slide, val gain: Double)
 private fun startOfWeek(d: LocalDate): LocalDate = d.minus(DatePeriod(days = d.dayOfWeek.ordinal))
 private fun daysBetween(from: Long, to: Long): Int = localDateOf(from).daysUntil(localDateOf(to))
 
-fun buildDashboard(workouts: List<Workout>, userId: String, exerciseNames: Map<String, String>, unit: WeightUnit, now: Long): Dashboard? {
+/** [assisted]: the lifts whose logged weight is help, where less of it is progress. */
+fun buildDashboard(
+    workouts: List<Workout>,
+    userId: String,
+    exerciseNames: Map<String, String>,
+    unit: WeightUnit,
+    now: Long,
+    assisted: Set<String> = emptySet(),
+): Dashboard? {
     val own = workouts.filter { it.owner == userId && it.status == WorkoutStatus.Completed && !it.deleted }
         .map { w ->
             val time = minOf(workoutTime(w), now)
@@ -180,16 +246,16 @@ fun buildDashboard(workouts: List<Workout>, userId: String, exerciseNames: Map<S
         for (t in own.asReversed()) t.workout.entries.firstOrNull { it.exerciseId == id }?.let { return it.name }
         return id
     }
-    val weeks = weeklyVolume(own, now)
-    val prs = countPrs(own, now)
+    val weeks = weeklyVolume(own, now, assisted)
+    val prs = countPrs(own, now, assisted)
     val latest = own.last()
     if (now - latest.time <= SUMMARY_MS) {
-        return Dashboard(summary(own, ::nameOf, unit), weeks, latest.time + SUMMARY_MS, prs)
+        return Dashboard(summary(own, ::nameOf, unit, assisted), weeks, latest.time + SUMMARY_MS, prs)
     }
     if (own.size < 2) return null
-    val sentence = trend(own, ::nameOf, unit, now, prs)
+    val sentence = trend(own, ::nameOf, unit, now, prs, assisted)
     if (sentence is Sentence.Improving) return Dashboard(sentence, weeks, null, prs)
-    val recap = lastRecap(own, ::nameOf, unit)
+    val recap = lastRecap(own, ::nameOf, unit, assisted)
     if (recap is Sentence.Finished) return Dashboard(recap.copy(duration = "", kept = true), weeks, null, prs)
     if (sentence != null) return Dashboard(sentence, weeks, null, prs)
     if (recap is Sentence.Matched) return Dashboard(recap.copy(duration = "", kept = true), weeks, null, prs)
@@ -201,7 +267,7 @@ private fun sameRoutine(a: Workout, b: Workout): Boolean =
 
 private fun exerciseIds(ts: List<Timed>): List<String> = ts.flatMap { t -> t.workout.entries.map { it.exerciseId } }.distinct()
 
-private fun lastRecap(own: List<Timed>, nameOf: (String) -> String, unit: WeightUnit): Sentence? {
+private fun lastRecap(own: List<Timed>, nameOf: (String) -> String, unit: WeightUnit, assisted: Set<String>): Sentence? {
     val seen = mutableListOf<Workout>()
     var matched: Sentence? = null
     for (i in own.indices.reversed()) {
@@ -209,14 +275,14 @@ private fun lastRecap(own: List<Timed>, nameOf: (String) -> String, unit: Weight
         val w = own[i].workout
         if (seen.any { sameRoutine(it, w) }) continue
         seen += w
-        val s = summary(own.subList(0, i + 1), nameOf, unit)
+        val s = summary(own.subList(0, i + 1), nameOf, unit, assisted)
         if (s is Sentence.Finished) return s
         if (s is Sentence.Matched && matched == null) matched = s
     }
     return matched
 }
 
-private fun summary(own: List<Timed>, nameOf: (String) -> String, unit: WeightUnit): Sentence {
+private fun summary(own: List<Timed>, nameOf: (String) -> String, unit: WeightUnit, assisted: Set<String>): Sentence {
     val latest = own.last()
     val id = latest.workout.id
     val routineName = latest.workout.routineName
@@ -226,9 +292,10 @@ private fun summary(own: List<Timed>, nameOf: (String) -> String, unit: WeightUn
     val ranked = mutableListOf<Ranked>()
     var matched = 0
     for (eid in exerciseIds(listOf(latest))) {
-        val n = bestSetIn(listOf(latest.workout), eid) ?: continue
-        val t = bestSetIn(listOf(previous.workout), eid) ?: continue
-        val cmp = compareBestIn(n, t, listOf(previous.workout), eid, unit)
+        val a = eid in assisted
+        val n = bestSetIn(listOf(latest.workout), eid, assisted = a) ?: continue
+        val t = bestSetIn(listOf(previous.workout), eid, assisted = a) ?: continue
+        val cmp = compareBestIn(n, t, listOf(previous.workout), eid, unit, a)
         if (cmp == Comparison.Equal) matched++
         toSlide(eid, nameOf(eid), cmp, "since last", "$routineName.")?.let { ranked += it }
     }
@@ -237,7 +304,7 @@ private fun summary(own: List<Timed>, nameOf: (String) -> String, unit: WeightUn
     return Sentence.Done(id, routineName, duration)
 }
 
-private fun trend(own: List<Timed>, nameOf: (String) -> String, unit: WeightUnit, now: Long, prs: Int): Sentence? {
+private fun trend(own: List<Timed>, nameOf: (String) -> String, unit: WeightUnit, now: Long, prs: Int, assisted: Set<String>): Sentence? {
     val latest = own.last()
     val sinceLatest = daysBetween(latest.time, now)
     if (sinceLatest >= BREAK_DAYS) return Sentence.Break(agoLabel(sinceLatest))
@@ -251,11 +318,12 @@ private fun trend(own: List<Timed>, nameOf: (String) -> String, unit: WeightUnit
     val ranked = mutableListOf<Ranked>()
     var comparable = 0
     for (eid in exerciseIds(recent)) {
-        val n = bestSetIn(recentW, eid) ?: continue
-        val t = bestSetIn(baseW, eid) ?: continue
+        val a = eid in assisted
+        val n = bestSetIn(recentW, eid, assisted = a) ?: continue
+        val t = bestSetIn(baseW, eid, assisted = a) ?: continue
         comparable++
         val since = "${sinceLabel(t.time, now)}."
-        toSlide(eid, nameOf(eid), compareBestIn(n, t, baseW, eid, unit), "since", since)?.let { ranked += it }
+        toSlide(eid, nameOf(eid), compareBestIn(n, t, baseW, eid, unit, a), "since", since)?.let { ranked += it }
     }
     val monthWorkouts = own.count { val d = localDateOf(it.time); d.year == today.year && d.month == today.month }
     if (ranked.isNotEmpty()) return Sentence.Improving(topSlides(ranked), prs, monthWorkouts)
@@ -276,15 +344,15 @@ private fun workoutsSinceBreak(own: List<Timed>, now: Long): Int? {
 
 /**
  * Lifts this week heavier than every earlier working set of that lift; for a lift only ever done at
- * bodyweight, more reps than every earlier set.
+ * bodyweight, more reps than every earlier set; for an [assisted] lift, less help than ever before.
  */
-fun countPrsThisWeek(workouts: List<Workout>, userId: String, now: Long): Int {
+fun countPrsThisWeek(workouts: List<Workout>, userId: String, now: Long, assisted: Set<String> = emptySet()): Int {
     val own = workouts.filter { it.owner == userId && it.status == WorkoutStatus.Completed && !it.deleted }
         .map { Timed(it, it, minOf(workoutTime(it), now)) }.sortedBy { it.time }
-    return countPrs(own, now)
+    return countPrs(own, now, assisted)
 }
 
-private fun countPrs(own: List<Timed>, now: Long): Int {
+private fun countPrs(own: List<Timed>, now: Long, assisted: Set<String>): Int {
     val weekStart = startOfWeek(localDateOf(now)).atStartOfDayIn(localZone).toEpochMilliseconds()
     // One forward pass: the best set per lift over everything strictly earlier than the current
     // workout's time. Workouts sharing a timestamp do not count against each other, so a group is
@@ -300,34 +368,38 @@ private fun countPrs(own: List<Timed>, now: Long): Int {
             val t = own[k]
             val perLift = HashMap<String, BestSet>()
             for (entry in t.workout.entries) {
+                val a = entry.exerciseId in assisted
                 for (set in workingSets(entry)) {
                     val kg = toKg(set.weight, set.unit)
-                    val b = perLift[entry.exerciseId]
-                    if (b == null || kg > b.weightKg || (kg == b.weightKg && set.reps > b.reps)) perLift[entry.exerciseId] = BestSet(set.weight, set.unit, kg, set.reps, t.time)
+                    if (beats(kg, set.reps, perLift[entry.exerciseId], a)) {
+                        perLift[entry.exerciseId] = BestSet(set.weight, set.unit, kg, set.reps, t.time)
+                    }
                 }
             }
             for ((eid, best) in perLift) {
+                val a = eid in assisted
                 if (t.time >= weekStart) {
                     val prior = running[eid]
-                    if (prior != null && isRecord(best, prior)) prs++
+                    if (prior != null && isRecord(best, prior, a)) prs++
                 }
-                val g = group[eid]
-                if (g == null || best.weightKg > g.weightKg || (best.weightKg == g.weightKg && best.reps > g.reps)) group[eid] = best
+                if (beats(best.weightKg, best.reps, group[eid], a)) group[eid] = best
             }
         }
         for ((eid, best) in group) {
-            val r = running[eid]
-            if (r == null || best.weightKg > r.weightKg || (best.weightKg == r.weightKg && best.reps > r.reps)) running[eid] = best
+            if (beats(best.weightKg, best.reps, running[eid], eid in assisted)) running[eid] = best
         }
         i = j
     }
     return prs
 }
 
-private fun isRecord(best: BestSet, prior: BestSet): Boolean =
-    if (best.isBodyweight && prior.isBodyweight) best.reps > prior.reps else best.weightKg > prior.weightKg + 0.01
+private fun isRecord(best: BestSet, prior: BestSet, assisted: Boolean): Boolean = when {
+    best.isBodyweight && prior.isBodyweight -> best.reps > prior.reps
+    assisted -> best.weightKg < prior.weightKg - 0.01
+    else -> best.weightKg > prior.weightKg + 0.01
+}
 
-private fun weeklyVolume(own: List<Timed>, now: Long): List<WeekVolume> {
+private fun weeklyVolume(own: List<Timed>, now: Long, assisted: Set<String>): List<WeekVolume> {
     val current = startOfWeek(localDateOf(now))
     val first = startOfWeek(localDateOf(own.first().time))
     val count = minOf(WEEKS, first.daysUntil(current) / 7 + 1)
@@ -339,18 +411,25 @@ private fun weeklyVolume(own: List<Timed>, now: Long): List<WeekVolume> {
         if (t.time < windowStart - 86_400_000L) break
         val idx = starts.indexOf(startOfWeek(localDateOf(t.time)))
         if (idx < 0) continue
-        for (entry in t.workout.entries) for (set in workingSets(entry)) volume[idx] += toKg(set.weight, set.unit) * set.reps
+        volume[idx] += volumeKg(t.workout, assisted)
     }
     return starts.mapIndexed { i, s -> WeekVolume(s, volume[i]) }
 }
 
-/** Kilograms lifted in [workout]: weight × reps summed over its working sets. */
-fun volumeKg(workout: Workout): Double = workout.entries.sumOf { e -> workingSets(e).sumOf { toKg(it.weight, it.unit) * it.reps } }
+/**
+ * Kilograms lifted in [workout]: weight × reps summed over its working sets. The lifts in [assisted]
+ * add nothing: their weight is help, not load, like a bodyweight set.
+ */
+fun volumeKg(workout: Workout, assisted: Set<String> = emptySet()): Double =
+    workout.entries.sumOf { e ->
+        if (e.exerciseId in assisted && !e.isTimed) 0.0 else workingSets(e).sumOf { toKg(it.weight, it.unit) * it.reps }
+    }
 
 private fun toSlide(id: String, fullName: String, cmp: Comparison, lead: String, value: String): Ranked? = when (cmp) {
     is Comparison.Weight -> Ranked(Slide(id, displayName(fullName), fullName, cmp.amount, lead, value), cmp.gain)
     is Comparison.Reps -> Ranked(Slide(id, displayName(fullName), fullName, cmp.amount, "at", "${cmp.at}."), cmp.gain)
     is Comparison.BodyweightReps -> Ranked(Slide(id, displayName(fullName), fullName, cmp.amount, lead, value), cmp.gain)
+    is Comparison.LessAssistance -> Ranked(Slide(id, displayName(fullName), fullName, cmp.amount, lead, value, lessHelp = true), cmp.gain)
     else -> null
 }
 
@@ -380,10 +459,10 @@ enum class ChartRange(val label: String, val days: Int?) { D30("30D", 30), M3("3
 
 /**
  * Every lift's top set per completed session, oldest first, in one pass over [workouts]: the heaviest
- * working set in kg (with its reps), or the longest hold in seconds for a timed lift. One point per
- * session even when a lift appears twice in it.
+ * working set in kg (with its reps), the least help for a lift in [assisted], or the longest hold in
+ * seconds for a timed lift. One point per session even when a lift appears twice in it.
  */
-fun topSetSeries(workouts: Collection<Workout>, userId: String): Map<String, List<ChartPoint>> {
+fun topSetSeries(workouts: Collection<Workout>, userId: String, assisted: Set<String> = emptySet()): Map<String, List<ChartPoint>> {
     val out = mutableMapOf<String, MutableList<ChartPoint>>()
     for (w in workouts) {
         if (w.owner != userId || w.status != WorkoutStatus.Completed || w.deleted) continue
@@ -392,19 +471,21 @@ fun topSetSeries(workouts: Collection<Workout>, userId: String): Map<String, Lis
             if (entry.isSkipped || entry.exerciseId.isEmpty()) continue
             val sets = entry.sets.filter { it.done && it.tag != SetTag.Warmup }
             if (sets.isEmpty()) continue
+            val a = !entry.isTimed && entry.exerciseId in assisted
             val point = if (entry.isTimed) {
                 val longest = sets.maxOf { it.seconds ?: 0 }
                 if (longest <= 0) continue
                 ChartPoint(time, longest.toDouble(), 0, w.id, timed = true)
             } else {
-                val top = sets.maxWith(topSetOrder(timed = false))
+                val top = sets.maxWith(topSetOrder(timed = false, assisted = a))
                 ChartPoint(time, toKg(top.weight, top.unit), top.reps, w.id)
             }
             val list = out.getOrPut(entry.exerciseId) { mutableListOf() }
             val last = list.lastOrNull()
             if (last != null && last.workoutId == w.id) {
-                // The same order as within one entry: heavier (or longer) first, then more reps.
-                if (point.value > last.value || (point.value == last.value && point.reps > last.reps)) list[list.lastIndex] = point
+                // The same order as within one entry: heavier (or longer, or less help) first, then more reps.
+                val better = if (a) point.value < last.value else point.value > last.value
+                if (better || (point.value == last.value && point.reps > last.reps)) list[list.lastIndex] = point
             } else {
                 list += point
             }

@@ -22,6 +22,7 @@ import dev.southstar21.volum.model.Exercise
 import dev.southstar21.volum.model.Routine
 import dev.southstar21.volum.model.Workout
 import dev.southstar21.volum.model.WorkoutStatus
+import dev.southstar21.volum.model.assistedIds
 import dev.southstar21.volum.util.localDateOf
 import dev.southstar21.volum.util.nowMillis
 import kotlinx.coroutines.delay
@@ -33,14 +34,18 @@ import kotlinx.datetime.daysUntil
 
 /** Each exercise's top set the last time it was done, keyed by exercise id; never-done ones are left out. */
 fun UserSession.lastTopSetLabels(exercises: Collection<Exercise>): Map<String, String> =
-    repository.lastTopSetLabels(exercises.map { it.id to it.isTimed })
+    repository.lastTopSetLabels(exercises.map { it.id to it.isTimed }, assistedIds(exercises))
 
 /**
  * Last time's top set for each exercise id, read as timed or not by the paired flag (an entry may be
- * logged in a different shape than its exercise is tracked in now); never-done ones are left out.
+ * logged in a different shape than its exercise is tracked in now), and as assisted for the ids in
+ * [assisted]; never-done ones are left out.
  */
-fun Repository.lastTopSetLabels(exercises: List<Pair<String, Boolean>>): Map<String, String> = buildMap {
-    for ((id, timed) in exercises) lastEntryFor(id)?.let { lastTopSetLabel(it.sets, timed) }?.let { put(id, it) }
+fun Repository.lastTopSetLabels(
+    exercises: List<Pair<String, Boolean>>,
+    assisted: Set<String> = emptySet(),
+): Map<String, String> = buildMap {
+    for ((id, timed) in exercises) lastEntryFor(id)?.let { lastTopSetLabel(it.sets, timed, id in assisted) }?.let { put(id, it) }
 }
 
 /**

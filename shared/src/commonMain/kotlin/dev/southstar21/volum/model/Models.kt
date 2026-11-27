@@ -40,12 +40,24 @@ data class Exercise(
     val name: String,
     /** Logged as a duration (seconds) instead of reps, e.g. planks. */
     val timed: Boolean? = null,
+    /**
+     * The logged weight is help from a machine or band, e.g. assisted pull-ups: less of it is progress.
+     * Read from the exercise, not stored per entry, so switching it on re-reads the lift's whole history.
+     */
+    val assisted: Boolean? = null,
     val updatedAt: String,
     val deleted: Boolean = false,
     val updated: String? = null,
 ) {
     val isTimed: Boolean get() = timed == true
+    val isAssisted: Boolean get() = assisted == true && !isTimed
 }
+
+/** The ids of the lifts in [exercises] tracked as assisted, which the progress functions read in reverse. */
+fun assistedIds(exercises: Iterable<Exercise>): Set<String> = exercises.filter { it.isAssisted }.mapTo(HashSet()) { it.id }
+
+/** A new lift whose name says it's assisted ("Assisted pull-up") starts out tracked that way. */
+fun soundsAssisted(name: String): Boolean = name.contains("assisted", ignoreCase = true)
 
 @Serializable
 data class RoutineItem(

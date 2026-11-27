@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.sp
 import dev.southstar21.volum.data.SyncState
 import dev.southstar21.volum.model.Routine
 import dev.southstar21.volum.model.Workout
+import dev.southstar21.volum.model.assistedIds
 import dev.southstar21.volum.progress.Sentence
 import dev.southstar21.volum.progress.buildDashboard
 import dev.southstar21.volum.ui.LocalApp
@@ -163,7 +164,8 @@ fun TodayScreen() {
     }
     val ownWorkouts = remember(workouts, user.id) { workouts.values.filter { it.owner == user.id && !it.deleted } }
     val dashboard = rememberTicking(workouts, exercises, prefs.unit, tick = now) { at ->
-        buildDashboard(workouts.values.toList(), user.id, exercises.mapValues { it.value.name }, prefs.unit, at)
+        val names = exercises.mapValues { it.value.name }
+        buildDashboard(workouts.values.toList(), user.id, names, prefs.unit, at, assistedIds(exercises.values))
     }
 
     // Open sheets are kept by id, so they survive the activity being recreated.
@@ -373,9 +375,16 @@ private fun ProgressSentence(sentence: Sentence?, noRoutines: Boolean) {
     val lines: List<String> = when (sentence) {
         null -> listOf(if (noRoutines) "Let's set up your\nfirst routine." else "Start a routine to\nsee your progress.")
         is Sentence.Improving -> sentence.slides.map { s ->
-            if (s.lead == "at") "${s.name} is up **${s.amount}**\nat ${s.value}" else "${s.name} is up\n**${s.amount}** ${s.lead} ${s.value}"
+            when {
+                s.lessHelp -> "${s.name} needs\n**${s.amount}** less help ${s.lead} ${s.value}"
+                s.lead == "at" -> "${s.name} is up **${s.amount}**\nat ${s.value}"
+                else -> "${s.name} is up\n**${s.amount}** ${s.lead} ${s.value}"
+            }
         }
-        is Sentence.Finished -> sentence.slides.map { s -> "${s.name} is up\n**${s.amount}** ${if (s.lead == "at") "at" else s.lead} ${s.value}" }
+        is Sentence.Finished -> sentence.slides.map { s ->
+            if (s.lessHelp) "${s.name} needs\n**${s.amount}** less help ${s.lead} ${s.value}"
+            else "${s.name} is up\n**${s.amount}** ${if (s.lead == "at") "at" else s.lead} ${s.value}"
+        }
         is Sentence.Matched -> listOf(if (sentence.kept) "You matched your last\n**${sentence.routineName}** on **${plural(sentence.matched, "lift")}**." else "**${sentence.routineName} done.**\nYou matched last session.")
         is Sentence.FirstRoutine -> listOf("**First ${sentence.routineName}\nlogged.**")
         is Sentence.Done -> listOf("**${sentence.routineName} done.**")

@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.em
 import dev.southstar21.volum.model.SetEntry
 import dev.southstar21.volum.model.SetTag
 import dev.southstar21.volum.model.Workout
+import dev.southstar21.volum.model.assistedIds
 import dev.southstar21.volum.progress.bestSetIn
 import dev.southstar21.volum.progress.volumeKg
 import dev.southstar21.volum.progress.workoutTime
@@ -58,6 +59,7 @@ import dev.southstar21.volum.ui.Route
 import dev.southstar21.volum.ui.ownCompleted
 import dev.southstar21.volum.ui.rememberToday
 import dev.southstar21.volum.ui.workoutsState
+import dev.southstar21.volum.ui.exercisesState
 import dev.southstar21.volum.ui.components.CircleButton
 import dev.southstar21.volum.ui.components.ConfirmSheet
 import dev.southstar21.volum.ui.routinesState
@@ -155,6 +157,9 @@ fun HistoryScreen() {
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     val workouts by session.workoutsState()
+    val exercises by session.exercisesState()
+    // Assisted lifts' weight is help, not load: it adds no volume and ranks the least help as the top set.
+    val assisted = remember(exercises) { assistedIds(exercises.values) }
     val completed = remember(workouts) { ownCompleted(workouts, session.user.id).sortedByDescending { workoutTime(it) } }
     val byDay = remember(completed) { completed.groupBy { localDateOf(workoutTime(it)) } }
     // Only changes when the day does, so the screen isn't recomposed every minute.
@@ -185,7 +190,9 @@ fun HistoryScreen() {
                     ScreenTitle("History")
                     Mute("${plural(inYear, "workout")} in ${today.year}", size = T.Body)
                 }
-                HeatmapCard(today, byDay, prefs.unit) { day -> byDay[day]?.firstOrNull()?.let { nav.push(Route.WorkoutDetail(it.id)) } }
+                HeatmapCard(today, byDay, prefs.unit, assisted) { day ->
+                    byDay[day]?.firstOrNull()?.let { nav.push(Route.WorkoutDetail(it.id)) }
+                }
                 if (completed.isEmpty()) {
                     GlassCard(Modifier.padding(16.dp).fillMaxWidth()) {
                         Txt("No workouts recorded", size = T.Subhead, weight = Bold)
@@ -204,7 +211,11 @@ fun HistoryScreen() {
                     Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().glassCard(RoundedCornerShape(24.dp)).padding(vertical = 2.dp)) {
                         list.forEachIndexed { i, w ->
                             if (i > 0) Divider(inset = 66.dp, end = 14.dp)
-                            WorkoutRow(w, prefs.unit, onClick = { nav.push(Route.WorkoutDetail(w.id)) }, onLongClick = { deleteTargetId = w.id })
+                            WorkoutRow(
+                                w, prefs.unit, assisted,
+                                onClick = { nav.push(Route.WorkoutDetail(w.id)) },
+                                onLongClick = { deleteTargetId = w.id },
+                            )
                         }
                     }
                 }
@@ -224,11 +235,11 @@ fun HistoryScreen() {
 }
 
 @Composable
-private fun WorkoutRow(w: Workout, unit: dev.southstar21.volum.model.WeightUnit, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun WorkoutRow(w: Workout, unit: dev.southstar21.volum.model.WeightUnit, assisted: Set<String>, onClick: () -> Unit, onLongClick: () -> Unit) {
     val c = Volum.colors
     val d = localDateOf(workoutTime(w))
     val sets = w.entries.sumOf { e -> e.sets.count { it.done } }
-    val volume = formatVolume(volumeKg(w), unit)
+    val volume = formatVolume(volumeKg(w, assisted), unit)
     Row(
         Modifier.fillMaxWidth().tappable(onLongClick = onLongClick, onClick = onClick)
             // The long press, offered to screen readers by name.
@@ -260,11 +271,11 @@ private const val HEAT_WEEKS = 20
  * trained day opens its workout.
  */
 @Composable
-private fun HeatmapCard(today: LocalDate, byDay: Map<LocalDate, List<Workout>>, unit: dev.southstar21.volum.model.WeightUnit, onDay: (LocalDate) -> Unit) {
+private fun HeatmapCard(today: LocalDate, byDay: Map<LocalDate, List<Workout>>, unit: dev.southstar21.volum.model.WeightUnit, assisted: Set<String>, onDay: (LocalDate) -> Unit) {
     val c = Volum.colors
     val thisWeek = today.minus(DatePeriod(days = today.dayOfWeek.ordinal))
     val start = thisWeek.minus(DatePeriod(days = 7 * (HEAT_WEEKS - 1)))
-    val volumes = remember(byDay) { byDay.mapValues { (_, list) -> list.sumOf { volumeKg(it) } } }
+    val volumes = remember(byDay, assisted) { byDay.mapValues { (_, list) -> list.sumOf { volumeKg(it, assisted) } } }
     val stats = remember(byDay, today) {
         // Weeks in a row with a workout, counting back from this week (or last, if this one is still empty).
         val trainedWeeks = byDay.keys.map { it.minus(DatePeriod(days = it.dayOfWeek.ordinal)) }.toSet()
@@ -423,6 +434,9 @@ fun WorkoutDetailScreen(workoutId: String) {
     val scope = rememberCoroutineScope()
     val prefs by app.prefs.collectAsStateWithLifecycle()
     val workouts by session.workoutsState()
+    val exercises by session.exercisesState()
+    // Assisted lifts' weight is help, not load: it adds no volume and ranks the least help as the top set.
+    val assisted = remember(exercises) { assistedIds(exercises.values) }
     val live = workouts[workoutId]?.takeIf { !it.deleted }
     // Deleting leaves the screen: while it slides away it keeps showing the workout, not "deleted".
     var leaving by remember { mutableStateOf(false) }
@@ -477,7 +491,7 @@ fun WorkoutDetailScreen(workoutId: String) {
                 Txt(workout.routineName, size = T.Big, weight = ExtraBold, maxLines = 2)
                 Mute(listOf("${weekdayShort(d)} ${d.day} ${monthShort(d)}", duration, plural(sets, "set")).filter { it.isNotEmpty() }.joinToString(", "), size = T.Small, maxLines = 1)
             }
-            AnimatedNumber(volumeKg(workout)) { v ->
+            AnimatedNumber(volumeKg(workout, assisted)) { v ->
                 val volume = formatVolume(v, prefs.unit)
                 Row(verticalAlignment = Alignment.Bottom) {
                     Txt(volume.substringBeforeLast(' '), size = T.Heading, weight = ExtraBold, tracking = (-0.02).em, tabular = true, maxLines = 1)
@@ -514,7 +528,8 @@ fun WorkoutDetailScreen(workoutId: String) {
                         enter = fadeIn(tween(Durations.Fade)) + expandVertically(Springs.settle(), expandFrom = Alignment.Top),
                         exit = fadeOut(tween(Durations.Exit)) + shrinkVertically(Springs.settle(), shrinkTowards = Alignment.Top),
                     ) {
-                        val best = bestSetIn(listOf(workout), entry.exerciseId, Int.MAX_VALUE)
+                        val entryAssisted = !entry.isTimed && entry.exerciseId in assisted
+                        val best = bestSetIn(listOf(workout), entry.exerciseId, Int.MAX_VALUE, entryAssisted)
                         Column(Modifier.padding(start = 18.dp, end = 18.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             // The top set, once: the first set that matches the best, so a tie doesn't light up twice.
                             val topId = best?.let { b -> entry.sets.firstOrNull { it.done && it.tag != SetTag.Warmup && toKg(it.weight, it.unit) == b.weightKg && it.reps == b.reps }?.id }
@@ -522,7 +537,8 @@ fun WorkoutDetailScreen(workoutId: String) {
                             entry.sets.forEach { set ->
                                 val label = when (set.tag) { SetTag.Warmup -> "W"; SetTag.Drop -> "D"; null -> "${++n}" }
                                 val top = set.id == topId
-                                SetRow(label, setText(set, entry.isTimed, prefs.unit), done = set.done, top = top) { editIds = entry.id to set.id }
+                                val text = setText(set, entry.isTimed, prefs.unit, entryAssisted)
+                                SetRow(label, text, done = set.done, top = top) { editIds = entry.id to set.id }
                             }
                             Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Pill(height = 38.dp, debounce = false, onClick = {
@@ -595,12 +611,13 @@ private fun SetRow(label: String, value: String, done: Boolean, top: Boolean, on
     }
 }
 
-private fun setText(set: SetEntry, timed: Boolean, unit: dev.southstar21.volum.model.WeightUnit): String {
+private fun setText(set: SetEntry, timed: Boolean, unit: dev.southstar21.volum.model.WeightUnit, assisted: Boolean = false): String {
     val w = formatWeightValue(set.weightIn(unit))
     return when {
         timed && set.weight > 0 -> "$w ${unit.label} × ${formatSeconds(set.seconds ?: 0)}"
         timed -> formatSeconds(set.seconds ?: 0)
         set.weight == 0.0 -> plural(set.reps, "rep")
+        assisted -> "$w ${unit.label} assist × ${set.reps}"
         else -> "$w ${unit.label} × ${set.reps}"
     }
 }
