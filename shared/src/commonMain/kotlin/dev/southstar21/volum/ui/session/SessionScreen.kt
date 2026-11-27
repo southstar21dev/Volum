@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import dev.southstar21.volum.model.SetEntry
+import dev.southstar21.volum.model.assistedIds
 import dev.southstar21.volum.model.Workout
 import dev.southstar21.volum.model.WorkoutEntry
 import dev.southstar21.volum.model.WorkoutStatus
@@ -171,7 +172,8 @@ fun SessionScreen(workoutId: String) {
     // Keyed on what the labels are made of: the exercises shown and the history (lastEntries() is the
     // same map until a completed workout changes), not on every set tapped in the active workout.
     val shownExercises = workout.entries.map { it.exerciseId to it.isTimed }
-    val lastLabels = remember(repo.lastEntries(), shownExercises) { repo.lastTopSetLabels(shownExercises) }
+    val assisted = remember(exercises) { assistedIds(exercises.values) }
+    val lastLabels = remember(repo.lastEntries(), shownExercises, assisted) { repo.lastTopSetLabels(shownExercises, assisted) }
 
     val actions = EntryActions(
         onSet = { entry, set -> save(replaceSet(entry, set)) },
@@ -191,6 +193,7 @@ fun SessionScreen(workoutId: String) {
         onMenu = { menuEntry = it },
         onExpand = { e -> expandedId = if (expandedId == e.id) null else e.id },
         onMove = { ids -> save(reorderActive(latest(), ids)) },
+        assisted = assisted,
     )
 
     val totalSets = workout.entries.sumOf { it.sets.size }
@@ -256,7 +259,9 @@ fun SessionScreen(workoutId: String) {
                         Mute("Ready to finish? Tap below to record your workout.", Modifier.padding(top = 4.dp), size = T.Label, align = TextAlign.Center)
                         Spacer(Modifier.height(16.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AnimatedNumber(volumeKg(workout)) { Stat(formatVolume(it, prefs.unit), "volume", Modifier.weight(1f)) }
+                            AnimatedNumber(volumeKg(workout, assisted)) {
+                                Stat(formatVolume(it, prefs.unit), "volume", Modifier.weight(1f))
+                            }
                             AnimatedNumber(doneSets.toDouble()) { Stat("${it.roundToInt()}", "sets", Modifier.weight(1f)) }
                             ElapsedMinutesStat(workout.startedAt, Modifier.weight(1f))
                         }

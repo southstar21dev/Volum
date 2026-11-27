@@ -129,6 +129,8 @@ data class EntryActions(
     val keepSetUnits: Boolean = false,
     /** The unfinished exercises' new order (their ids), after a drag; null where the list can't be reordered. */
     val onMove: ((List<String>) -> Unit)? = null,
+    /** The lifts tracked as assisted: their weight is help, labelled as such. */
+    val assisted: Set<String> = emptySet(),
 )
 
 /** An exercise in progress: its sets, with the current one raised and its −/+ nudges. */
@@ -205,6 +207,7 @@ private fun SetRow(index: Int, set: SetEntry, current: Boolean, timed: Boolean, 
     val shape = RoundedCornerShape(20.dp)
     val weight = set.weightIn(preferred)
     val running = if (timed) Stopwatches.startedAt(set.id) else null
+    val assisted = !timed && entry.exerciseId in actions.assisted
     // One frame clock per running hold, shared by the seconds slot and the timer below.
     val elapsed = running?.let { rememberElapsed(it, frameUntilMs = (set.seconds ?: 0) * 1000L) }
     // Becoming the current set eases in (its ring, glow and the nudges below) rather than snapping, as
@@ -239,7 +242,8 @@ private fun SetRow(index: Int, set: SetEntry, current: Boolean, timed: Boolean, 
                 } else {
                     Row(verticalAlignment = Alignment.Bottom) {
                         Txt(formatWeightValue(weight), size = T.Heading, weight = ExtraBold, tracking = (-0.02).em, tabular = true)
-                        Txt(" ${preferred.label}", Modifier.padding(bottom = 2.dp), size = T.Caption, weight = Semibold, color = c.mute)
+                        val unitLabel = if (assisted) " ${preferred.label} assist" else " ${preferred.label}"
+                        Txt(unitLabel, Modifier.padding(bottom = 2.dp), size = T.Caption, weight = Semibold, color = c.mute, maxLines = 1)
                     }
                     Txt("${formatWeightValue(convert(weight, preferred, preferred.other))} ${preferred.other.label}", size = T.Micro, color = c.mute, tabular = true)
                 }
@@ -279,10 +283,11 @@ private fun SetRow(index: Int, set: SetEntry, current: Boolean, timed: Boolean, 
                     if (!timed || weight > 0) {
                         val unit = nudgeUnit(set, preferred, actions.keepSetUnits)
                         val step = stepWeight(unit)
-                        CircleButton(Icons.Minus, "Weight down ${formatWeightValue(step)} ${unit.label}", repeatable = true) {
+                        val what = if (assisted) "Assistance" else "Weight"
+                        CircleButton(Icons.Minus, "$what down ${formatWeightValue(step)} ${unit.label}", repeatable = true) {
                             haptic(Haptic.Tap); actions.onNudge(entry, set.id) { nudgedSet(it, preferred, actions.keepSetUnits, up = false) }
                         }
-                        CircleButton(Icons.Plus, "Weight up ${formatWeightValue(step)} ${unit.label}", repeatable = true) {
+                        CircleButton(Icons.Plus, "$what up ${formatWeightValue(step)} ${unit.label}", repeatable = true) {
                             haptic(Haptic.Tap); actions.onNudge(entry, set.id) { nudgedSet(it, preferred, actions.keepSetUnits, up = true) }
                         }
                     }
@@ -339,7 +344,8 @@ fun CompletedGroup(entries: List<WorkoutEntry>, preferred: WeightUnit, expandedI
                 }
                 Column(Modifier.weight(1f)) {
                     Txt(entry.name, size = T.Body, weight = Bold, maxLines = 1)
-                    Mute(if (entry.isSkipped) "Skipped" else summaryOf(entry, preferred), size = T.Caption, maxLines = 1)
+                    val summary = if (entry.isSkipped) "Skipped" else summaryOf(entry, preferred, entry.exerciseId in actions.assisted)
+                    Mute(summary, size = T.Caption, maxLines = 1)
                 }
                 val turn by animateFloatAsState(if (expandedId == entry.id) 180f else 0f, Springs.settle(), label = "chevron")
                 Icon(Icons.ChevronDown, c.mute, size = 18.dp, modifier = Modifier.graphicsLayer { rotationZ = turn })
@@ -375,11 +381,12 @@ internal fun nudgedSet(set: SetEntry, preferred: WeightUnit, keepSetUnits: Boole
     return set.copy(weight = if (up) base + step else (base - step).coerceAtLeast(0.0), unit = unit)
 }
 
-fun summaryOf(entry: WorkoutEntry, preferred: WeightUnit): String {
+fun summaryOf(entry: WorkoutEntry, preferred: WeightUnit, assisted: Boolean = false): String {
     val done = entry.sets.filter { it.done && it.tag != SetTag.Warmup }
     if (done.isEmpty()) return "${entry.sets.size} sets"
     if (entry.isTimed) return "${done.size} sets, ${formatSeconds(done.maxOf { it.seconds ?: 0 })} best"
-    val top = done.maxWith(topSetOrder(timed = false))
+    val top = done.maxWith(topSetOrder(timed = false, assisted = assisted))
     if (top.weight == 0.0) return "${done.size} sets, top ${plural(top.reps, "rep")}"
-    return "${done.size} sets, top ${formatWeightValue(top.weightIn(preferred))} ${preferred.label} × ${top.reps}"
+    val unitLabel = if (assisted) "${preferred.label} assist" else preferred.label
+    return "${done.size} sets, top ${formatWeightValue(top.weightIn(preferred))} $unitLabel × ${top.reps}"
 }

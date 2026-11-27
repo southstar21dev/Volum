@@ -231,6 +231,23 @@ class RepositoryTest {
         assertEquals(OWNER, created.owner)
         assertNotEquals("e1", created.id)
         assertEquals(false, created.timed)
+        assertEquals(false, created.assisted)
+    }
+
+    @Test fun saveExerciseTracksAssistanceAndKeepsItApartFromTime() = runTest {
+        val repo = Repository(newStore(), OWNER)
+        // Named as assisted: tracked that way from the start.
+        val pullUp = repo.saveExercise(name = "Assisted pull-up")
+        assertEquals(true, pullUp.assisted)
+        // A rename keeps the flag; it can be switched off by hand.
+        assertEquals(true, repo.saveExercise(id = pullUp.id, name = "Band pull-up").assisted)
+        assertEquals(false, repo.saveExercise(id = pullUp.id, name = "Band pull-up", assisted = false).assisted)
+        val dip = repo.saveExercise(name = "Dip", assisted = true)
+        assertEquals(true, dip.assisted)
+        // Switching to time clears it: a lift is tracked one way or the other.
+        val timed = repo.saveExercise(id = dip.id, name = "Dip", timed = true)
+        assertEquals(true, timed.timed)
+        assertEquals(false, timed.assisted)
     }
 
     @Test fun findOrCreateExerciseNeverReusesAPartnersExercise() = runTest {

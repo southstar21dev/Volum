@@ -117,6 +117,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.graphics.drawscope.clipRect
 import dev.southstar21.volum.model.Exercise
 import dev.southstar21.volum.model.SetTag
+import dev.southstar21.volum.model.assistedIds
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.saveable.rememberSaveable
 import dev.southstar21.volum.progress.topSetSeries
@@ -151,13 +152,16 @@ fun LiftsScreen() {
     val list = rememberLazyListState()
 
     // Each lift's top set per session, oldest first: the rail's bars and the rows' trend lines.
-    val series = remember(workouts) { topSetSeries(workouts.values, session.user.id) }
+    val assisted = remember(exercises) { assistedIds(exercises.values) }
+    val series = remember(workouts, assisted) { topSetSeries(workouts.values, session.user.id, assisted) }
     // What the rail and the trend lines draw: each lift's points in the shape of its latest session.
     val shaped = remember(series) { series.mapValues { (_, points) -> latestShape(points) } }
     val lastEntries = remember(workouts) { session.repository.lastEntries() }
     val live = remember(exercises) { exercises.values.filter { !it.deleted } }
     // Each lift's last top set, worked out once per data change rather than per row per recomposition.
-    val labels = remember(lastEntries, live) { live.associate { ex -> ex.id to lastEntries[ex.id]?.let { lastTopSetLabel(it.sets, it.isTimed) } } }
+    val labels = remember(lastEntries, live) {
+        live.associate { ex -> ex.id to lastEntries[ex.id]?.let { lastTopSetLabel(it.sets, it.isTimed, ex.isAssisted) } }
+    }
     val visible = remember(live, query, sort, series) {
         val matching = live.filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
         when (sort) {
@@ -216,7 +220,9 @@ fun LiftsScreen() {
                     LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(recent, key = { it.id }) { ex ->
                             val (timed, points) = shaped.getValue(ex.id)
-                            RecentTile(ex.name, points, timed, prefs.unit) { nav.push(Route.ExerciseDetail(ex.id)) }
+                            RecentTile(ex.name, points, timed, !timed && ex.isAssisted, prefs.unit) {
+                                nav.push(Route.ExerciseDetail(ex.id))
+                            }
                         }
                     }
                 }
@@ -256,7 +262,7 @@ fun LiftsScreen() {
                                             Txt(ex.name, size = T.Body, weight = Bold, maxLines = 1)
                                             Mute(label ?: if (ex.isTimed) "Timed, not done yet" else "Not done yet", size = T.Caption, maxLines = 1)
                                         }
-                                        if (points.size > 1) Sparkline(points.takeLast(6))
+                                        if (points.size > 1) Sparkline(points.takeLast(6), assisted = ex.isAssisted && !points.last().timed)
                                     }
                                 }
                             }
@@ -294,20 +300,29 @@ private fun latestShape(points: List<ChartPoint>): Pair<Boolean, List<ChartPoint
     return timed to points.filter { it.timed == timed }
 }
 
-/** A recently trained lift: its last top set big, and its last six sessions as bars, the latest in forest. */
+/**
+ * A recently trained lift: its last top set big, and its last six sessions as bars, the latest in forest.
+ * On an [assisted] lift the bars grow as the help shrinks.
+ */
 @Composable
-private fun RecentTile(name: String, points: List<ChartPoint>, timed: Boolean, unit: WeightUnit, onClick: () -> Unit) {
+private fun RecentTile(name: String, points: List<ChartPoint>, timed: Boolean, assisted: Boolean, unit: WeightUnit, onClick: () -> Unit) {
     val c = Volum.colors
     val last = points.last()
-    val bodyweight = !timed && last.value <= 0.0
+    val bodyweight = !timed && !assisted && last.value <= 0.0
     val (figure, figureUnit, sub) = when {
         timed -> Triple(formatSeconds(last.value.toInt()), "", "hold")
         bodyweight -> Triple("${last.reps}", " reps", "bodyweight")
+        assisted && last.value <= 0.0 -> Triple("${last.reps}", " reps", "unassisted")
+        assisted -> Triple(
+            formatWeightValue(convert(last.value, WeightUnit.Kg, unit)),
+            " ${unit.label}",
+            "assist, ${plural(last.reps, "rep")}",
+        )
         else -> Triple(formatWeightValue(convert(last.value, WeightUnit.Kg, unit)), " ${unit.label}", plural(last.reps, "rep"))
     }
     val recent = points.takeLast(6)
-    // Bodyweight lifts trend on reps; everything else on the top set.
-    val values = recent.map { if (bodyweight) it.reps.toDouble() else it.value }
+    // Bodyweight lifts trend on reps; everything else on the top set, mirrored for an assisted lift.
+    val values = if (assisted) mirrored(recent.map { it.value }) else recent.map { if (bodyweight) it.reps.toDouble() else it.value }
     val max = values.max().coerceAtLeast(1.0)
     Column(
         Modifier.width(150.dp).tappable(onClick = onClick).glassCard(RoundedCornerShape(24.dp))
@@ -335,11 +350,24 @@ private fun RecentTile(name: String, points: List<ChartPoint>, timed: Boolean, u
     }
 }
 
-/** A small trend line of a lift's recent top sets, drawn left to right on entrance. Flat reads muted. */
+/**
+ * [values] flipped within their own range, so the least help on an assisted lift reads highest:
+ * 50, 35, 20 becomes 20, 35, 50.
+ */
+private fun mirrored(values: List<Double>): List<Double> {
+    val hi = values.maxOrNull() ?: return values
+    val lo = values.min()
+    return values.map { hi + lo - it }
+}
+
+/**
+ * A small trend line of a lift's recent top sets, drawn left to right on entrance. Flat reads muted.
+ * An [assisted] lift's line rises as the help drops.
+ */
 @Composable
-private fun Sparkline(points: List<ChartPoint>) {
+private fun Sparkline(points: List<ChartPoint>, assisted: Boolean = false) {
     val c = Volum.colors
-    val values = points.map { if (it.value > 0) it.value else it.reps.toDouble() }
+    val values = if (assisted) mirrored(points.map { it.value }) else points.map { if (it.value > 0) it.value else it.reps.toDouble() }
     val flat = values.max() - values.min() < 0.01
     val color = if (flat) c.mute else c.accent
     val entrance = LocalEntrance.current
@@ -383,14 +411,18 @@ fun ExerciseDetailScreen(exerciseId: String) {
     val firstEntry = own.firstNotNullOfOrNull { w -> w.entries.firstOrNull { it.exerciseId == exerciseId } }
     val name = exercise?.name ?: firstEntry?.name ?: "Exercise"
     val timed = exercise?.isTimed ?: firstEntry?.isTimed ?: false
+    // The logged weight is help: less is better, so the record is the least and the chart is flipped.
+    val assisted = !timed && exercise?.isAssisted == true
+    val assistedSet = if (assisted) setOf(exerciseId) else emptySet()
     val unit = prefs.unit
+    val weightUnit = if (assisted) "${unit.label} assist" else unit.label
     // The same top sets as the Lifts list, keeping the sessions logged in the lift's current shape.
-    val series = remember(workouts, timed) {
-        topSetSeries(own, session.user.id)[exerciseId].orEmpty().filter { it.timed == timed }
+    val series = remember(workouts, timed, assisted) {
+        topSetSeries(own, session.user.id, assistedSet)[exerciseId].orEmpty().filter { it.timed == timed }
     }
     var range by remember { mutableStateOf(ChartRange.M3) }
     // Never loaded: the top sets are reps at bodyweight, so the cards and chart count reps, not 0 kg.
-    val bodyweight = !timed && series.isNotEmpty() && series.all { it.value == 0.0 }
+    val bodyweight = !timed && !assisted && series.isNotEmpty() && series.all { it.value == 0.0 }
     val shown = filterRange(series, range, now).ifEmpty { if (range == ChartRange.All) emptyList() else series.takeLast(1) }
     var menu by remember { mutableStateOf(false) }
     var renaming by rememberSaveable { mutableStateOf(false) }
@@ -410,14 +442,18 @@ fun ExerciseDetailScreen(exerciseId: String) {
                 trailing = { if (exercise != null && exercise.owner == session.user.id) CircleButton(Icons.More, "More options for $name") { menu = true } },
             )
             ScreenTitle(name, Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp))
-            val pr = if (bodyweight) series.maxByOrNull { it.reps } else series.maxByOrNull { it.value }
+            val pr = when {
+                bodyweight -> series.maxByOrNull { it.reps }
+                assisted -> series.minWithOrNull(compareBy<ChartPoint> { it.value }.thenByDescending { it.reps })
+                else -> series.maxByOrNull { it.value }
+            }
             val latest = series.lastOrNull()
             val previous = series.dropLast(1).lastOrNull()
             Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp).height(androidx.compose.foundation.layout.IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 StatCard(
-                    if (timed) "Longest hold" else "Personal record",
+                    if (timed) "Longest hold" else if (assisted) "Least assistance" else "Personal record",
                     pr?.let { if (timed) formatSeconds(it.value.toInt()) else if (bodyweight) "${it.reps}" else formatWeightValue(display(it.value)) } ?: "-",
-                    if (timed) "" else if (bodyweight) "reps" else unit.label,
+                    if (timed) "" else if (bodyweight) "reps" else weightUnit,
                     pr?.let { if (timed || bodyweight) shortDate(it.time) else "${it.reps} reps, ${shortDate(it.time)}" },
                     null,
                     Modifier.weight(1f).fillMaxHeight(),
@@ -426,7 +462,7 @@ fun ExerciseDetailScreen(exerciseId: String) {
                 StatCard(
                     if (timed) "Latest hold" else "Latest top set",
                     latest?.let { if (timed) formatSeconds(it.value.toInt()) else if (bodyweight) "${it.reps}" else formatWeightValue(display(it.value)) } ?: "-",
-                    if (timed) "" else if (bodyweight) "reps" else unit.label,
+                    if (timed) "" else if (bodyweight) "reps" else weightUnit,
                     null,
                     delta?.takeIf { abs(it) > 0.01 }?.let { d -> (if (d > 0) "+" else "−") + if (timed) "${abs(d).toInt()} s" else if (bodyweight) plural(abs(d).toInt(), "rep") else "${formatWeightValue(abs(display(d)))} ${unit.label}" },
                     Modifier.weight(1f).fillMaxHeight(),
@@ -438,9 +474,15 @@ fun ExerciseDetailScreen(exerciseId: String) {
                 if (shown.isEmpty()) {
                     Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) { Mute("Log a session to see your trend.") }
                 } else {
-                    ProgressChart(shown, timed, bodyweight, unit)
+                    ProgressChart(shown, timed, bodyweight, unit, inverted = assisted)
                 }
-                Mute(if (timed) "Longest hold per session." else if (bodyweight) "Most reps per session." else "Capsules show reps on the top set.", Modifier.padding(start = 4.dp, top = 6.dp), size = T.Caption)
+                val caption = when {
+                    timed -> "Longest hold per session."
+                    bodyweight -> "Most reps per session."
+                    assisted -> "Least assistance per session. Higher is less help."
+                    else -> "Capsules show reps on the top set."
+                }
+                Mute(caption, Modifier.padding(start = 4.dp, top = 6.dp), size = T.Caption)
             }
             Row(Modifier.padding(start = 22.dp, end = 22.dp, top = 18.dp, bottom = 10.dp), verticalAlignment = Alignment.Bottom) {
                 Txt("Session history", Modifier.weight(1f), size = T.Subhead, weight = Bold)
@@ -467,11 +509,19 @@ fun ExerciseDetailScreen(exerciseId: String) {
                     val topId = if (entryTimed) {
                         done.filter { it.tag != SetTag.Warmup && (it.seconds ?: 0) > 0 }.maxByOrNull { it.seconds ?: 0 }?.id
                     } else {
-                        bestSetIn(listOf(w), exerciseId, Int.MAX_VALUE)?.let { b -> done.firstOrNull { it.tag != SetTag.Warmup && toKg(it.weight, it.unit) == b.weightKg && it.reps == b.reps }?.id }
+                        bestSetIn(listOf(w), exerciseId, Int.MAX_VALUE, assisted)?.let { b ->
+                            done.firstOrNull { it.tag != SetTag.Warmup && toKg(it.weight, it.unit) == b.weightKg && it.reps == b.reps }?.id
+                        }
                     }
                     done.forEachIndexed { i, s ->
                         val v = convert(s.weight, s.unit, unit)
-                        SetLine("${i + 1}", if (entryTimed) (if (s.weight > 0) "${formatWeightValue(v)} ${unit.label} × ${formatSeconds(s.seconds ?: 0)}" else formatSeconds(s.seconds ?: 0)) else if (s.weight == 0.0) plural(s.reps, "rep") else "${formatWeightValue(v)} ${unit.label} × ${s.reps}", strong = s.id == topId)
+                        val text = when {
+                            entryTimed && s.weight > 0 -> "${formatWeightValue(v)} ${unit.label} × ${formatSeconds(s.seconds ?: 0)}"
+                            entryTimed -> formatSeconds(s.seconds ?: 0)
+                            s.weight == 0.0 -> plural(s.reps, "rep")
+                            else -> "${formatWeightValue(v)} $weightUnit × ${s.reps}"
+                        }
+                        SetLine("${i + 1}", text, strong = s.id == topId)
                     }
                 }
             }
@@ -482,11 +532,15 @@ fun ExerciseDetailScreen(exerciseId: String) {
     ActionSheet(
         open = menu,
         title = name,
-        actions = listOf(
+        actions = listOfNotNull(
             // Each opening starts from the current name, not a cancelled draft.
             SheetAction("Rename", Icons.Pencil) { draft = name; renaming = true },
             SheetAction(if (timed) "Track as reps" else "Track as time (seconds)", Icons.Timer) {
                 exercise?.let { e -> scope.launch { session.repository.saveExercise(e.id, e.name, !timed) } }
+            },
+            // Only for lifts tracked by reps: a timed lift has no assistance to read.
+            if (timed) null else SheetAction(if (assisted) "Track as added weight" else "Track as assisted (less is better)", Icons.Swap) {
+                exercise?.let { e -> scope.launch { session.repository.saveExercise(e.id, e.name, assisted = !assisted) } }
             },
             SheetAction("Archive", Icons.Trash, destructive = true) { archive = true },
         ),
@@ -550,7 +604,7 @@ private fun StatCard(label: String, value: String, unit: String, sub: String?, c
 
 /** Top set per session: a forest line over milky rep capsules, tap a point for its numbers. */
 @Composable
-private fun ProgressChart(points: List<ChartPoint>, timed: Boolean, bodyweight: Boolean, unit: WeightUnit) {
+private fun ProgressChart(points: List<ChartPoint>, timed: Boolean, bodyweight: Boolean, unit: WeightUnit, inverted: Boolean = false) {
     val c = Volum.colors
     val measurer = rememberTextMeasurer()
     val labelStyle = textStyle(T.Micro, Semibold, c.mute)
@@ -565,9 +619,10 @@ private fun ProgressChart(points: List<ChartPoint>, timed: Boolean, bodyweight: 
         val p = points[i]
         return if (timed) "${formatSeconds(p.value.toInt())} on ${shortDate(p.time)}"
         else if (bodyweight) "${plural(p.reps, "rep")} on ${shortDate(p.time)}"
-        else "${formatWeightValue(values[i])} ${unit.label} for ${p.reps} reps on ${shortDate(p.time)}"
+        else "${formatWeightValue(values[i])} ${unit.label}${if (inverted) " of assistance" else ""} for ${p.reps} reps on ${shortDate(p.time)}"
     }
-    val trend = "Top set per session, ${plural(points.size, "session")}: from ${spoken(0)} to ${spoken(points.lastIndex)}."
+    val what = if (inverted) "Least assistance" else "Top set"
+    val trend = "$what per session, ${plural(points.size, "session")}: from ${spoken(0)} to ${spoken(points.lastIndex)}."
     Box(Modifier.fillMaxWidth().height(200.dp)) {
         Canvas(
             Modifier.fillMaxSize()
@@ -591,7 +646,8 @@ private fun ProgressChart(points: List<ChartPoint>, timed: Boolean, bodyweight: 
             val right = size.width - 16.dp.toPx()
             val topY = 12.dp.toPx()
             val baseY = size.height - 24.dp.toPx()
-            fun y(v: Double) = (baseY - (v - bottom) / (top - bottom) * (baseY - topY)).toFloat()
+            // Inverted (an assisted lift): less help sits higher, so progress still climbs. Labels keep the real values.
+            fun y(v: Double) = (baseY - (if (inverted) top - v else v - bottom) / (top - bottom) * (baseY - topY)).toFloat()
             fun x(i: Int) = if (points.size == 1) (left + right) / 2 else left + i * (right - left) / (points.size - 1)
             // Grid and axis labels
             for (k in 0..2) {
@@ -634,7 +690,7 @@ private fun ProgressChart(points: List<ChartPoint>, timed: Boolean, bodyweight: 
         if (p != null) {
             val label = if (timed) "${formatSeconds(p.value.toInt())}, ${shortDate(p.time)}"
             else if (bodyweight) "${plural(p.reps, "rep")}, ${monthShort(localDateOf(p.time))} ${localDateOf(p.time).day}"
-            else "${formatWeightValue(values[selected])} ${unit.label} × ${p.reps}, ${monthShort(localDateOf(p.time))} ${localDateOf(p.time).day}"
+            else "${formatWeightValue(values[selected])} ${unit.label}${if (inverted) " assist" else ""} × ${p.reps}, ${monthShort(localDateOf(p.time))} ${localDateOf(p.time).day}"
             Box(
                 Modifier.align(Alignment.TopCenter).liquidGlass(RoundedCornerShape(14.dp))
                     .clearAndSetSemantics { contentDescription = spoken(selected); liveRegion = LiveRegionMode.Polite }

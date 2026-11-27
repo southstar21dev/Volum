@@ -12,6 +12,7 @@ import dev.southstar21.volum.model.WeightUnit
 import dev.southstar21.volum.model.Workout
 import dev.southstar21.volum.model.WorkoutEntry
 import dev.southstar21.volum.model.WorkoutStatus
+import dev.southstar21.volum.model.soundsAssisted
 import dev.southstar21.volum.util.formatSeconds
 import dev.southstar21.volum.util.formatWeight
 import dev.southstar21.volum.util.isoOf
@@ -56,15 +57,19 @@ class Repository(
      * Creates or updates one of the user's exercises. A partner's exercise is left as it is and
      * returned unchanged: writing it would either take it over or be rejected and stick in the outbox.
      */
-    suspend fun saveExercise(id: String? = null, name: String, timed: Boolean? = null): Exercise {
+    suspend fun saveExercise(id: String? = null, name: String, timed: Boolean? = null, assisted: Boolean? = null): Exercise {
         val record = store.transaction {
             val existing = id?.let { exercises[it] }
             if (existing != null && existing.owner != owner) return@transaction existing
+            val trimmed = name.trim().take(MAX_EXERCISE_NAME)
+            val isTimed = timed ?: existing?.timed ?: false
+            val isAssisted = assistedFlag(assisted, existing, trimmed, isTimed)
             val record = Exercise(
                 id = existing?.id ?: id ?: newId(),
                 owner = existing?.owner ?: owner,
-                name = name.trim().take(MAX_EXERCISE_NAME),
-                timed = timed ?: existing?.timed ?: false,
+                name = trimmed,
+                timed = isTimed,
+                assisted = isAssisted,
                 updatedAt = nowIso(),
                 deleted = existing?.deleted ?: false,
             )
@@ -395,6 +400,13 @@ class Repository(
     }
 }
 
+/**
+ * Whether a saved lift is tracked as assisted: as asked, else as it was, else (a new lift) by its name.
+ * A lift is tracked by time or by assistance, never both: switching to time clears it.
+ */
+private fun assistedFlag(asked: Boolean?, existing: Exercise?, name: String, timed: Boolean): Boolean =
+    !timed && (asked ?: existing?.assisted ?: (existing == null && soundsAssisted(name)))
+
 /** Longest names the server accepts (pb_migrations: routines.name and workouts.routineName, exercises.name). */
 const val MAX_ROUTINE_NAME = 120
 const val MAX_EXERCISE_NAME = 200
@@ -415,20 +427,25 @@ fun nameClash(exercises: Map<String, Exercise>, owner: String, exceptId: String,
 
 /**
  * The order every view picks a top set by: the heaviest set in kg, then the most reps; for a timed
- * lift the longest hold, then the heaviest.
+ * lift the longest hold, then the heaviest; for an [assisted] lift the least help, then the most reps.
  */
-fun topSetOrder(timed: Boolean): Comparator<SetEntry> =
+fun topSetOrder(timed: Boolean, assisted: Boolean = false): Comparator<SetEntry> =
     if (timed) compareBy<SetEntry> { it.seconds ?: 0 }.thenBy { dev.southstar21.volum.util.toKg(it.weight, it.unit) }
+    else if (assisted) compareByDescending<SetEntry> { dev.southstar21.volum.util.toKg(it.weight, it.unit) }.thenBy { it.reps }
     else compareBy<SetEntry> { dev.southstar21.volum.util.toKg(it.weight, it.unit) }.thenBy { it.reps }
 
-/** "62.5 kg × 8" for the top working set of last time, "12 reps" at bodyweight, or a hold length for timed lifts. */
-fun lastTopSetLabel(sets: List<SetEntry>, timed: Boolean): String? {
+/**
+ * "62.5 kg × 8" for the top working set of last time, "12 reps" at bodyweight, "20 kg assist × 8" for
+ * an [assisted] lift, or a hold length for timed lifts.
+ */
+fun lastTopSetLabel(sets: List<SetEntry>, timed: Boolean, assisted: Boolean = false): String? {
     val qualifying = sets.filter { it.done && it.tag != SetTag.Warmup }
     if (qualifying.isEmpty()) return null
-    val top = qualifying.maxWith(topSetOrder(timed))
+    val top = qualifying.maxWith(topSetOrder(timed, assisted))
     return when {
         timed -> if (top.weight > 0) "${formatWeight(top.weight, top.unit)} × ${formatSeconds(top.seconds ?: 0)}" else formatSeconds(top.seconds ?: 0)
         top.weight == 0.0 -> plural(top.reps, "rep")
+        assisted -> "${formatWeight(top.weight, top.unit)} assist × ${top.reps}"
         else -> "${formatWeight(top.weight, top.unit)} × ${top.reps}"
     }
 }

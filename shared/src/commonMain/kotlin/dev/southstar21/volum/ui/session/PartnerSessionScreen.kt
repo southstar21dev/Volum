@@ -42,6 +42,7 @@ import dev.southstar21.volum.data.WorkoutMutation
 import dev.southstar21.volum.data.applyWorkoutMutation
 import dev.southstar21.volum.data.partnerErrorMessage
 import dev.southstar21.volum.model.SetEntry
+import dev.southstar21.volum.model.assistedIds
 import dev.southstar21.volum.model.Workout
 import dev.southstar21.volum.model.WorkoutEntry
 import dev.southstar21.volum.model.WorkoutStatus
@@ -178,6 +179,7 @@ fun PartnerSessionScreen(workoutId: String) {
         onMenu = { menuEntry = it },
         onExpand = { e -> expandedId = if (expandedId == e.id) null else e.id },
         keepSetUnits = true,
+        assisted = assistedIds(exercises.values),
     )
 
     val w = workout
